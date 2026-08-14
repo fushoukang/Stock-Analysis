@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,7 +23,7 @@ from data.stream import LiveStreamManager, RAW_TIMEFRAME
 from data.resample import resample_bars, BAR_MINUTES
 from charts.candlestick import build_candlestick_figure
 from data.company_names import get_company_name
-from alerts.kdj_monitor import KDJMonitor, load_monitor_symbols
+from alerts.kdj_monitor import KDJMonitor, load_monitor_symbols, save_monitor_symbols
 from screeners.tradingview import fetch_52_week_high, fetch_52_week_low, ScreenerError as TVScreenerError
 from screeners.halts import fetch_current_halts, ScreenerError as HaltsScreenerError
 
@@ -216,6 +216,39 @@ async def get_symbols() -> JSONResponse:
     # file takes effect without restarting the app. The Symbol field stays a
     # free-text box too, so any other ticker can still be typed directly.
     return JSONResponse({"symbols": load_monitor_symbols()})
+
+
+@app.post("/api/monitor-list")
+async def update_monitor_list(request: Request) -> JSONResponse:
+    """Saves the Symbol dropdown's "Edit List" popup back to
+    monitor_list.txt. Expects {"symbols": ["AAPL", "MSFT", ...]}. This is
+    the same file the KDJ monitor watches, so newly added symbols also pick
+    up KDJ cross alerts on the monitor's next cycle without a restart."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Request body must be JSON"}, status_code=400)
+
+    symbols = body.get("symbols") if isinstance(body, dict) else None
+    if not isinstance(symbols, list) or not all(isinstance(s, str) for s in symbols):
+        return JSONResponse(
+            {"error": 'Expected a JSON body like {"symbols": ["AAPL", "MSFT"]}'},
+            status_code=400,
+        )
+
+    try:
+        saved = save_monitor_symbols(symbols)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to save monitor_list.txt")
+        return JSONResponse({"error": f"Failed to save: {exc}"}, status_code=500)
+
+    # Start streaming any newly added symbols immediately, so the chart and
+    # KDJ monitor don't have to wait for a restart to see live data for them.
+    if stream_manager is not None:
+        for sym in saved:
+            stream_manager.subscribe_symbol(sym)
+
+    return JSONResponse({"symbols": saved})
 
 
 @app.get("/api/timeframes")

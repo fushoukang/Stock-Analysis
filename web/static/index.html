@@ -27,6 +27,20 @@
   .symbol-dropdown-list .symbol-option { padding: 6px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
   .symbol-dropdown-list .symbol-option:hover { background: #f3f4f6; }
   .symbol-dropdown-list .symbol-empty { padding: 6px 10px; font-size: 12px; color: #9ca3af; }
+  .symbol-dropdown-list .symbol-separator { border-top: 1px solid #e5e7eb; margin: 4px 0; }
+  .symbol-dropdown-list .symbol-edit-list { padding: 6px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; color: #2563eb; font-weight: 600; }
+  .symbol-dropdown-list .symbol-edit-list:hover { background: #eff6ff; }
+  /* Edit List modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .modal-overlay[hidden] { display: none; }
+  .modal-box { background: white; border-radius: 8px; width: 420px; max-width: 90vw; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+  .modal-box h3 { margin: 0 0 6px; font-size: 15px; color: #111827; }
+  .modal-box p { margin: 0 0 10px; font-size: 12px; color: #6b7280; }
+  .modal-box textarea { width: 100%; height: 160px; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; text-transform: uppercase; resize: vertical; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .modal-actions button { padding: 6px 14px; font-size: 13px; cursor: pointer; border-radius: 4px; border: 1px solid #d1d5db; background: white; }
+  .modal-actions button.primary { background: #2563eb; border-color: #2563eb; color: white; }
+  #edit-list-msg { font-size: 12px; color: #b45309; margin-top: 8px; min-height: 14px; }
   .indicator-group { display: flex; gap: 10px; flex-wrap: wrap; }
   .indicator-group label { display: flex; align-items: center; gap: 4px; font-size: 13px; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
   /* Sits to the right of the indicator checkboxes, with extra left margin on
@@ -107,6 +121,19 @@
   <div id="screener-table-wrap"><table id="screener-table"><thead id="screener-thead"></thead><tbody id="screener-tbody"></tbody></table></div>
 </div>
 
+<div id="edit-list-overlay" class="modal-overlay" hidden>
+  <div class="modal-box">
+    <h3>Edit Symbol List</h3>
+    <p>One symbol per line (or comma/space-separated). Saved to monitor_list.txt.</p>
+    <textarea id="edit-list-textarea" spellcheck="false"></textarea>
+    <div id="edit-list-msg"></div>
+    <div class="modal-actions">
+      <button id="edit-list-cancel" type="button">Cancel</button>
+      <button id="edit-list-ok" class="primary" type="button">OK</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // SMA is always shown, merged directly onto the candlestick chart (see
 // charts/candlestick.py), so it isn't a toggle here.
@@ -139,6 +166,11 @@ const placeholderSubtitle = document.getElementById("placeholder-subtitle");
 const screenerMsg = document.getElementById("screener-msg");
 const screenerThead = document.getElementById("screener-thead");
 const screenerTbody = document.getElementById("screener-tbody");
+const editListOverlay = document.getElementById("edit-list-overlay");
+const editListTextarea = document.getElementById("edit-list-textarea");
+const editListMsg = document.getElementById("edit-list-msg");
+const editListCancelBtn = document.getElementById("edit-list-cancel");
+const editListOkBtn = document.getElementById("edit-list-ok");
 
 // Top-level category dropdown in the header. "Focus Stock Analysis" is the
 // existing chart view. The other three are market screeners: 52-week
@@ -265,9 +297,12 @@ function selectedIndicators() {
 let monitorSymbols = [];
 
 function renderSymbolDropdown() {
-  symbolDropdown.innerHTML = monitorSymbols.length
+  const optionsHtml = monitorSymbols.length
     ? monitorSymbols.map(s => `<div class="symbol-option" data-symbol="${s}">${s}</div>`).join("")
     : `<div class="symbol-empty">No symbols in monitor_list.txt</div>`;
+  symbolDropdown.innerHTML = optionsHtml
+    + `<div class="symbol-separator"></div>`
+    + `<div class="symbol-edit-list" data-action="edit-list">Edit List…</div>`;
 }
 
 function openSymbolDropdown() {
@@ -466,11 +501,67 @@ symbolDropdownBtn.addEventListener("click", (e) => {
 });
 
 symbolDropdown.addEventListener("click", (e) => {
+  if (e.target.closest("[data-action='edit-list']")) {
+    closeSymbolDropdown();
+    openEditListModal();
+    return;
+  }
   const opt = e.target.closest(".symbol-option");
   if (!opt) return;
   symbolInput.value = opt.dataset.symbol;
   closeSymbolDropdown();
   loadChart();
+});
+
+// "Edit List" popup — view/edit monitor_list.txt's symbols and save back to
+// the file. Symbols are shown/entered one per line for readability; the
+// backend also accepts comma/space separation and dedupes on save.
+function openEditListModal() {
+  editListTextarea.value = monitorSymbols.join("\n");
+  editListMsg.textContent = "";
+  editListOverlay.hidden = false;
+  editListTextarea.focus();
+}
+
+function closeEditListModal() {
+  editListOverlay.hidden = true;
+}
+
+async function saveEditListModal() {
+  const symbols = editListTextarea.value
+    .split(/[\s,]+/)
+    .map(s => s.trim().toUpperCase())
+    .filter(Boolean);
+  editListOkBtn.disabled = true;
+  editListMsg.textContent = "Saving…";
+  try {
+    const res = await fetch("/api/monitor-list", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({symbols}),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      editListMsg.textContent = data.error || `Failed to save (HTTP ${res.status})`;
+      return;
+    }
+    monitorSymbols = data.symbols || symbols;
+    renderSymbolDropdown();
+    closeEditListModal();
+  } catch (err) {
+    editListMsg.textContent = `Failed to save: ${err}`;
+  } finally {
+    editListOkBtn.disabled = false;
+  }
+}
+
+editListCancelBtn.addEventListener("click", closeEditListModal);
+editListOkBtn.addEventListener("click", saveEditListModal);
+editListOverlay.addEventListener("click", (e) => {
+  if (e.target === editListOverlay) closeEditListModal(); // click outside the box
+});
+editListTextarea.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeEditListModal();
 });
 
 document.addEventListener("click", (e) => {

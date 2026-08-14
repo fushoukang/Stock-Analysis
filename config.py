@@ -6,7 +6,9 @@ anything that talks to Alpaca.
 """
 from __future__ import annotations
 
+import logging
 import os
+import socket
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time
 from pathlib import Path
@@ -19,7 +21,41 @@ from alpaca.data.enums import DataFeed
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
 
+logger = logging.getLogger("config")
+
 EASTERN = ZoneInfo("America/New_York")
+
+
+def detect_local_ipv4() -> str:
+    """Best-effort detection of this machine's LAN IPv4 address, so the
+    server can bind to it without a real address ever needing to be typed
+    into .env or read out loud. Uses the standard no-traffic trick: opening
+    a UDP socket "connected" to a public address doesn't send any packets,
+    it just asks the OS to pick the local interface/IP that would be used
+    for that route, which is normally the LAN-facing one (Wi-Fi/Ethernet)
+    rather than the loopback interface. Falls back to 127.0.0.1 (local-only)
+    if detection fails for any reason, e.g. no network at all.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        logger.warning(
+            "Could not auto-detect a LAN IPv4 address — falling back to "
+            "127.0.0.1 (only reachable from this machine). Set HOST in .env "
+            "explicitly to override."
+        )
+        return "127.0.0.1"
+    finally:
+        sock.close()
+
+
+def _host_env() -> str:
+    val = (os.getenv("HOST") or "auto").strip()
+    if val.lower() == "auto":
+        return detect_local_ipv4()
+    return val
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -59,7 +95,10 @@ class Settings:
         )
     )
     db_path: str = field(default_factory=lambda: os.getenv("DB_PATH", "data_store.db"))
-    host: str = field(default_factory=lambda: os.getenv("HOST", "127.0.0.1"))
+    # "auto" (the default) detects this machine's LAN IPv4 at startup so the
+    # GUI is reachable from other devices on the network without hardcoding
+    # an address in .env. Set HOST explicitly (e.g. 127.0.0.1) to override.
+    host: str = field(default_factory=_host_env)
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8000")))
 
     # --- KDJ cross alerting ---

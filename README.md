@@ -77,6 +77,13 @@ and computes indicators, but never places, modifies, or cancels orders.
 python main.py
 ```
 
+By default `HOST=auto` in `.env`, so the server detects this machine's LAN
+IPv4 address at startup and binds to it — the GUI is reachable from other
+devices on your network without hardcoding an address. The actual address is
+printed to your terminal by uvicorn when it starts (`Uvicorn running on
+http://...`); set `HOST` to a specific value (e.g. `127.0.0.1` for
+local-only access) to override auto-detection.
+
 Then open http://localhost:8000 in a browser. On startup the app backfills
 recent history for each watchlist symbol, connects the live stream, and
 begins pushing updates to any open browser tabs.

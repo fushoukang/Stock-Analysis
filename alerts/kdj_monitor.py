@@ -56,19 +56,41 @@ def _freshness_window() -> pd.Timedelta:
     return pd.Timedelta(minutes=settings.kdj_freshness_window_min)
 
 
+def monitor_list_path(path: str | Path | None = None) -> Path:
+    p = Path(path or settings.monitor_list_path)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return p
+
+
 def load_monitor_symbols(path: str | Path | None = None) -> list[str]:
     """Read the watch list. Symbols may be separated by whitespace, commas,
     or newlines — re-read on every cycle so editing the file takes effect
     without restarting the app."""
-    p = Path(path or settings.monitor_list_path)
-    if not p.is_absolute():
-        p = PROJECT_ROOT / p
+    p = monitor_list_path(path)
     if not p.exists():
         logger.warning("Monitor list file not found: %s", p)
         return []
     text = p.read_text()
     symbols = [s.strip().upper() for s in text.replace(",", " ").split()]
     return [s for s in symbols if s]
+
+
+def save_monitor_symbols(symbols: list[str], path: str | Path | None = None) -> list[str]:
+    """Write the watch list back to monitor_list.txt, one symbol per line —
+    used by the GUI's "Edit List" popup (see web/app.py's
+    /api/monitor-list POST endpoint). Dedupes while preserving order,
+    uppercases, and drops blanks so a messy paste still saves cleanly."""
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for s in symbols:
+        sym = s.strip().upper()
+        if sym and sym not in seen:
+            seen.add(sym)
+            cleaned.append(sym)
+    p = monitor_list_path(path)
+    p.write_text("\n".join(cleaned) + ("\n" if cleaned else ""))
+    return cleaned
 
 
 def detect_cross(kdj_df: pd.DataFrame) -> str | None:
