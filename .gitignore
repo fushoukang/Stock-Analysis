@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets — never commit real Alpaca/SMTP credentials
+.env
+
+# OS cruft
+.DS_Store
+
+# Local SQLite bar cache (regenerated on startup via backfill)
+data_store.db
+

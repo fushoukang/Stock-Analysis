@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Stock Trading Analysis</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f7f8fa; color: #1a1a1a; }
+  header { background: #111827; color: white; padding: 14px 20px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  #status-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; display: inline-block; margin-right: 6px; }
+  #status-dot.live { background: #22c55e; }
+  #status-dot.off { background: #ef4444; }
+  /* Market-closed message replaces the live/disconnected status in the
+     header entirely while the market data window is closed. */
+  #market-closed-banner { display: none; color: #fbbf24; font-size: 13px; font-weight: 600; }
+  #market-closed-banner.show { display: inline; }
+  .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding: 14px 20px; background: white; border-bottom: 1px solid #e5e7eb; }
+  .controls label { font-size: 13px; color: #374151; margin-right: 6px; }
+  .controls select, .controls input[type="text"] { padding: 4px 8px; font-size: 13px; }
+  .controls input[type="text"] { width: 100px; text-transform: uppercase; }
+  .controls button { padding: 5px 12px; font-size: 13px; cursor: pointer; }
+  .symbol-combo { position: relative; display: inline-flex; align-items: center; gap: 0; }
+  .symbol-combo input[type="text"] { border-radius: 4px 0 0 4px; border-right: none; }
+  #symbol-dropdown-btn { border: 1px solid #d1d5db; border-radius: 0 4px 4px 0; background: #f3f4f6; padding: 5px 8px; font-size: 11px; line-height: 1; }
+  .symbol-dropdown-list { position: absolute; top: 100%; left: 0; margin-top: 2px; min-width: 100%; max-height: 220px; overflow-y: auto; background: white; border: 1px solid #d1d5db; border-radius: 4px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); z-index: 20; }
+  .symbol-dropdown-list .symbol-option { padding: 6px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .symbol-dropdown-list .symbol-option:hover { background: #f3f4f6; }
+  .symbol-dropdown-list .symbol-empty { padding: 6px 10px; font-size: 12px; color: #9ca3af; }
+  .indicator-group { display: flex; gap: 10px; flex-wrap: wrap; }
+  .indicator-group label { display: flex; align-items: center; gap: 4px; font-size: 13px; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+  /* Sits to the right of the indicator checkboxes, with extra left margin on
+     top of .controls' own gap so it reads as a visually separate section. */
+  #kdj-alerts-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: 28px; padding-left: 20px; border-left: 1px solid #e5e7eb; }
+  #kdj-alerts-label { font-size: 12px; font-weight: 600; color: #6b7280; white-space: nowrap; }
+  #kdj-alerts { display: flex; gap: 6px; flex-wrap: wrap; }
+  #kdj-alerts:empty::after { content: "none yet"; font-size: 12px; color: #9ca3af; font-style: italic; }
+  .kdj-alert-chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 12px; white-space: nowrap; }
+  .kdj-alert-chip.up { background: #dcfce7; color: #15803d; }
+  .kdj-alert-chip.down { background: #fee2e2; color: #b91c1c; }
+  #chart { width: 100%; height: 78vh; background: white; padding-right: 40px; box-sizing: border-box; }
+  #msg { padding: 8px 20px; font-size: 13px; color: #b45309; }
+  /* Category dropdown pinned to the right of the title bar. */
+  #category-select { margin-left: auto; background: #1f2937; color: white; border: 1px solid #374151; border-radius: 4px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+  #placeholder-view { display: none; padding: 20px; }
+  #placeholder-view.show { display: block; }
+  #placeholder-view h2 { font-size: 18px; margin: 0 0 4px; color: #374151; }
+  #placeholder-subtitle { font-size: 13px; color: #6b7280; margin: 0 0 14px; }
+  #screener-msg { font-size: 13px; color: #b45309; margin-bottom: 10px; }
+  #screener-table-wrap { overflow-x: auto; }
+  #screener-table { width: 100%; border-collapse: collapse; background: white; font-size: 13px; }
+  #screener-table th { text-align: left; padding: 8px 12px; background: #f3f4f6; color: #374151; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+  #screener-table td { padding: 7px 12px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+  #screener-table tr:hover td { background: #f9fafb; }
+  #screener-table a { color: #2563eb; text-decoration: none; font-weight: 600; }
+  #screener-table a:hover { text-decoration: underline; }
+  .chg-up { color: #16a34a; font-weight: 600; }
+  .chg-down { color: #dc2626; font-weight: 600; }
+  .halt-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+  .halt-badge.active { background: #fee2e2; color: #b91c1c; }
+  .halt-badge.resumed { background: #dcfce7; color: #15803d; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Stock Trading Analysis</h1>
+  <span id="ws-status"><span id="status-dot"></span><span id="status-text">connecting…</span></span>
+  <span id="market-closed-banner">The market has closed. Live data resumes at <span id="market-reopen-time"></span> ET.</span>
+  <select id="category-select">
+    <option value="focus" selected>Focus Stock Analysis</option>
+    <option value="52w-high">52 Week High Stocks</option>
+    <option value="52w-low">52 Week Low Stocks</option>
+    <option value="halts">Current Market Halt Stocks</option>
+  </select>
+</header>
+
+<div id="focus-view">
+  <div class="controls">
+    <div>
+      <label for="symbol">Symbol</label>
+      <span class="symbol-combo">
+        <input type="text" id="symbol" placeholder="e.g. TQQQ" autocomplete="off">
+        <button id="symbol-dropdown-btn" type="button" title="Symbols from monitor_list.txt">&#9662;</button>
+        <div id="symbol-dropdown" class="symbol-dropdown-list" hidden></div>
+      </span>
+      <button id="load-btn" type="button">Load</button>
+    </div>
+    <div>
+      <label for="timeframe">Interval</label>
+      <select id="timeframe"></select>
+    </div>
+    <div class="indicator-group" id="indicators"></div>
+    <div id="kdj-alerts-wrap">
+      <span id="kdj-alerts-label">KDJ Alerts</span>
+      <div id="kdj-alerts"></div>
+    </div>
+  </div>
+
+  <div id="msg"></div>
+  <div id="chart"></div>
+</div>
+
+<div id="placeholder-view">
+  <h2 id="placeholder-title"></h2>
+  <p id="placeholder-subtitle"></p>
+  <div id="screener-msg"></div>
+  <div id="screener-table-wrap"><table id="screener-table"><thead id="screener-thead"></thead><tbody id="screener-tbody"></tbody></table></div>
+</div>
+
+<script>
+// SMA is always shown, merged directly onto the candlestick chart (see
+// charts/candlestick.py), so it isn't a toggle here.
+const AVAILABLE_INDICATORS = [
+  {id: "ema", label: "EMA"},
+  {id: "boll", label: "BOLL"},
+  {id: "rsi", label: "RSI"},
+  {id: "sar", label: "SAR"},
+  {id: "kdj", label: "KDJ"},
+];
+
+const symbolInput = document.getElementById("symbol");
+const symbolDropdownBtn = document.getElementById("symbol-dropdown-btn");
+const symbolDropdown = document.getElementById("symbol-dropdown");
+const loadBtn = document.getElementById("load-btn");
+const timeframeSel = document.getElementById("timeframe");
+const indicatorsDiv = document.getElementById("indicators");
+const kdjAlertsDiv = document.getElementById("kdj-alerts");
+const msgDiv = document.getElementById("msg");
+const wsStatusSpan = document.getElementById("ws-status");
+const statusDot = document.getElementById("status-dot");
+const statusText = document.getElementById("status-text");
+const marketClosedBanner = document.getElementById("market-closed-banner");
+const marketReopenTimeSpan = document.getElementById("market-reopen-time");
+const categorySelect = document.getElementById("category-select");
+const focusView = document.getElementById("focus-view");
+const placeholderView = document.getElementById("placeholder-view");
+const placeholderTitle = document.getElementById("placeholder-title");
+const placeholderSubtitle = document.getElementById("placeholder-subtitle");
+const screenerMsg = document.getElementById("screener-msg");
+const screenerThead = document.getElementById("screener-thead");
+const screenerTbody = document.getElementById("screener-tbody");
+
+// Top-level category dropdown in the header. "Focus Stock Analysis" is the
+// existing chart view. The other three are market screeners: 52-week
+// high/low (scraped from TradingView's market-movers pages) and current
+// trading halts (from Nasdaq's official Trade Halt RSS feed) — see
+// screeners/tradingview.py and screeners/halts.py. Each symbol links out to
+// its CNBC.com quote page.
+const CATEGORY_LABELS = {
+  "52w-high": "52 Week High Stocks",
+  "52w-low": "52 Week Low Stocks",
+  "halts": "Current Market Halt Stocks",
+};
+const CATEGORY_SUBTITLES = {
+  "52w-high": "Market cap > $1B. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
+  "52w-low": "Market cap > $100M. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
+  "halts": "Today's trading halts, most recent first (up to 5). Source: Nasdaq Trade Halt feed.",
+};
+const CATEGORY_ENDPOINTS = {
+  "52w-high": "/api/screener/52w-high",
+  "52w-low": "/api/screener/52w-low",
+  "halts": "/api/screener/halts",
+};
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function formatMarketCap(v) {
+  if (v == null) return "—";
+  const units = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
+  for (const [mult, suffix] of units) {
+    if (v >= mult) return (v / mult).toFixed(2) + suffix;
+  }
+  return String(v);
+}
+
+function renderMoversTable(rows) {
+  screenerThead.innerHTML = "<tr><th>Symbol</th><th>Company</th><th>Price</th><th>Chg %</th><th>Mkt Cap</th></tr>";
+  screenerTbody.innerHTML = rows.map((r) => {
+    const chgClass = r.change_pct == null ? "" : (r.change_pct >= 0 ? "chg-up" : "chg-down");
+    const chgText = r.change_pct == null ? "—" : `${r.change_pct >= 0 ? "+" : ""}${r.change_pct.toFixed(2)}%`;
+    return `<tr>
+      <td><a href="${escapeHtml(r.cnbc_url)}" target="_blank" rel="noopener">${escapeHtml(r.symbol)}</a></td>
+      <td>${escapeHtml(r.company)}</td>
+      <td>${r.price != null ? "$" + r.price.toFixed(2) : "—"}</td>
+      <td class="${chgClass}">${chgText}</td>
+      <td>${formatMarketCap(r.market_cap)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderHaltsTable(rows) {
+  screenerThead.innerHTML = "<tr><th>Symbol</th><th>Company</th><th>Halt Date</th><th>Halt Time</th><th>Market</th><th>Reason</th><th>Status</th></tr>";
+  screenerTbody.innerHTML = rows.map((r) => {
+    const badge = r.currently_halted
+      ? '<span class="halt-badge active">Halted</span>'
+      : `<span class="halt-badge resumed">Resumed ${escapeHtml(r.resumption_time || "")}</span>`;
+    return `<tr>
+      <td><a href="${escapeHtml(r.cnbc_url)}" target="_blank" rel="noopener">${escapeHtml(r.symbol)}</a></td>
+      <td>${escapeHtml(r.company)}</td>
+      <td>${escapeHtml(r.halt_date)}</td>
+      <td>${escapeHtml(r.halt_time)}</td>
+      <td>${escapeHtml(r.market)}</td>
+      <td>${escapeHtml(r.reason_code)}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadScreener(value) {
+  const endpoint = CATEGORY_ENDPOINTS[value];
+  if (!endpoint) return;
+  screenerMsg.textContent = "Loading…";
+  screenerThead.innerHTML = "";
+  screenerTbody.innerHTML = "";
+  try {
+    const res = await fetch(endpoint);
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      screenerMsg.textContent = data.error || `Failed to load (HTTP ${res.status})`;
+      return;
+    }
+    const rows = data.rows || [];
+    if (rows.length === 0) {
+      screenerMsg.textContent = "No matching stocks found right now.";
+      return;
+    }
+    screenerMsg.textContent = "";
+    if (value === "halts") {
+      renderHaltsTable(rows);
+    } else {
+      renderMoversTable(rows);
+    }
+  } catch (err) {
+    screenerMsg.textContent = `Failed to load: ${err}`;
+  }
+}
+
+function applyCategory(value) {
+  if (value === "focus") {
+    focusView.style.display = "";
+    placeholderView.classList.remove("show");
+  } else {
+    focusView.style.display = "none";
+    placeholderTitle.textContent = CATEGORY_LABELS[value] || "";
+    placeholderSubtitle.textContent = CATEGORY_SUBTITLES[value] || "";
+    placeholderView.classList.add("show");
+    loadScreener(value);
+  }
+}
+
+categorySelect.addEventListener("change", () => applyCategory(categorySelect.value));
+
+function currentSymbol() {
+  return symbolInput.value.trim().toUpperCase();
+}
+
+function selectedIndicators() {
+  return Array.from(indicatorsDiv.querySelectorAll("input:checked")).map(cb => cb.value);
+}
+
+let monitorSymbols = [];
+
+function renderSymbolDropdown() {
+  symbolDropdown.innerHTML = monitorSymbols.length
+    ? monitorSymbols.map(s => `<div class="symbol-option" data-symbol="${s}">${s}</div>`).join("")
+    : `<div class="symbol-empty">No symbols in monitor_list.txt</div>`;
+}
+
+function openSymbolDropdown() {
+  renderSymbolDropdown(); // re-render each time so edits to monitor_list.txt show up
+  symbolDropdown.hidden = false;
+}
+
+function closeSymbolDropdown() {
+  symbolDropdown.hidden = true;
+}
+
+async function loadOptions() {
+  const [symRes, tfRes] = await Promise.all([
+    fetch("/api/symbols").then(r => r.json()),
+    fetch("/api/timeframes").then(r => r.json()),
+  ]);
+  monitorSymbols = symRes.symbols || [];
+  renderSymbolDropdown();
+  symbolInput.value = "QQQ"; // NASDAQ index proxy (Alpaca doesn't trade raw index tickers)
+
+  timeframeSel.innerHTML = tfRes.timeframes.map(t => `<option value="${t}">${t}</option>`).join("");
+  timeframeSel.value = "15Min";
+
+  indicatorsDiv.innerHTML = AVAILABLE_INDICATORS.map(ind => `
+    <label><input type="checkbox" value="${ind.id}"> ${ind.label}</label>
+  `).join("");
+}
+
+// Recent KDJ cross alerts, shown on screen as chips to the right of the
+// indicator checkboxes (mirrors the email alerts sent by the KDJ monitor).
+const MAX_KDJ_ALERTS = 6;
+let kdjAlerts = [];
+
+function renderKdjAlerts() {
+  kdjAlertsDiv.innerHTML = kdjAlerts.map(a => {
+    const cls = a.direction === "up" ? "up" : "down";
+    const arrow = a.direction === "up" ? "▲" : "▼";
+    const barTime = new Date(a.bar_time).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+    const title = `${a.timeframe} KDJ cross at ${barTime} — K=${a.k} D=${a.d} J=${a.j}`;
+    return `<span class="kdj-alert-chip ${cls}" title="${title}">${arrow} ${a.symbol} ${barTime}</span>`;
+  }).join("");
+}
+
+function addKdjAlert(alert) {
+  kdjAlerts.unshift(alert);
+  if (kdjAlerts.length > MAX_KDJ_ALERTS) kdjAlerts.length = MAX_KDJ_ALERTS;
+  renderKdjAlerts();
+}
+
+// Polls whether Alpaca is currently reachable (the 6am-6pm ET market data
+// window — see config.py / data/stream.py). Outside it the backend makes no
+// Alpaca calls at all; this just shows that state clearly rather than
+// leaving the chart looking silently stuck.
+// Tracks the last known market-open state so the 30s fallback poll below can
+// skip re-fetching the chart while the market is closed — otherwise the
+// screen visibly "refreshes" every 30s for no reason, since there's no new
+// data (and no Alpaca calls happening) while closed anyway.
+let marketOpen = true; // optimistic default until the first status check lands
+
+async function refreshMarketStatus() {
+  try {
+    const res = await fetch("/api/status");
+    const body = await res.json();
+    marketOpen = body.market_open !== false;
+    if (!marketOpen) {
+      marketReopenTimeSpan.textContent = body.market_data_start_et || "";
+      marketClosedBanner.classList.add("show");
+      wsStatusSpan.style.display = "none"; // replace the live/disconnected dot with the banner
+    } else {
+      marketClosedBanner.classList.remove("show");
+      wsStatusSpan.style.display = "";
+    }
+  } catch (e) {
+    // Transient fetch failure — leave things in whatever state they were.
+  }
+}
+
+let chartLoadInFlight = false;
+
+// Mirrors the title format built server-side in charts/candlestick.py, so a
+// live trade tick can update just the price in the title (via Plotly.relayout
+// below) without re-fetching or re-rendering the whole chart.
+let chartRendered = false;
+let titleSymbol = null;
+let titleCompanyName = null;
+// The price last shown in the title — compared against each new tick to
+// decide whether to color it green (up) or red (down). Reset whenever the
+// chart is fully reloaded (new symbol, new bar, etc.) so the color always
+// reflects movement relative to what's actually on screen.
+let lastTitlePrice = null;
+
+const PRICE_UP_COLOR = "#16a34a";
+const PRICE_DOWN_COLOR = "#dc2626";
+
+function buildPriceTitle(symbol, companyName, price, color) {
+  const nameSuffix = companyName ? ` — ${companyName}` : "";
+  let priceSuffix = "";
+  if (price !== null && price !== undefined) {
+    const priceText = `$${Number(price).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    priceSuffix = ` — ${color ? `<span style="color:${color}">${priceText}</span>` : priceText}`;
+  }
+  return `<b>${symbol}${nameSuffix}${priceSuffix}</b>`;
+}
+
+function updateTitlePrice(price) {
+  if (!chartRendered || titleSymbol === null) return;
+  let color = null;
+  if (lastTitlePrice !== null && price !== lastTitlePrice) {
+    color = price > lastTitlePrice ? PRICE_UP_COLOR : PRICE_DOWN_COLOR;
+  }
+  Plotly.relayout("chart", {"annotations[0].text": buildPriceTitle(titleSymbol, titleCompanyName, price, color)});
+  lastTitlePrice = price;
+}
+
+async function loadChart() {
+  const symbol = currentSymbol();
+  if (!symbol) {
+    msgDiv.textContent = "Enter a symbol.";
+    return;
+  }
+  if (chartLoadInFlight) return; // avoid overlapping fetches (WS message + poll timer racing)
+  chartLoadInFlight = true;
+  try {
+    const timeframe = timeframeSel.value;
+    const indicators = selectedIndicators().join(",");
+    msgDiv.textContent = "Loading…";
+    const res = await fetch(`/api/chart?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&indicators=${encodeURIComponent(indicators)}`);
+    const body = await res.json();
+    if (body.error) {
+      msgDiv.textContent = body.error;
+      Plotly.purge("chart");
+      chartRendered = false;
+      return;
+    }
+    msgDiv.textContent = "";
+    const fig = JSON.parse(body.figure);
+    Plotly.react("chart", fig.data, fig.layout, {responsive: true});
+    chartRendered = true;
+    titleSymbol = symbol;
+    titleCompanyName = body.company_name || null;
+    // Reset the up/down comparison baseline to this chart's actual last
+    // close, so the next live tick's color reflects real movement instead
+    // of comparing against a stale price from before the reload/symbol switch.
+    const priceTrace = fig.data.find(t => t.type === "candlestick");
+    const closes = priceTrace && priceTrace.close;
+    lastTitlePrice = (closes && closes.length) ? closes[closes.length - 1] : null;
+  } finally {
+    chartLoadInFlight = false;
+  }
+}
+
+function connectWebSocket() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    statusDot.className = "live";
+    statusText.textContent = "live";
+  };
+  ws.onclose = () => {
+    statusDot.className = "off";
+    statusText.textContent = "disconnected — retrying…";
+    setTimeout(connectWebSocket, 3000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    if (msg.type === "kdj_alert") {
+      addKdjAlert(msg);
+      return;
+    }
+    if (msg.type === "price") {
+      // Lightweight: just updates the title text in place from live trade
+      // ticks, no chart refetch/redraw (that still happens separately on
+      // each new bar via the "bars" message below, and via the 30s poll).
+      const entry = msg.data.find(p => p.symbol === currentSymbol());
+      if (entry) updateTitlePrice(entry.price);
+      return;
+    }
+    if (msg.type !== "bars") return;
+    const relevant = msg.data.some(b => b.symbol === currentSymbol());
+    if (relevant) loadChart();
+  };
+}
+
+loadBtn.addEventListener("click", loadChart);
+symbolInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { closeSymbolDropdown(); loadChart(); } });
+symbolInput.addEventListener("focus", openSymbolDropdown);
+timeframeSel.addEventListener("change", loadChart);
+indicatorsDiv.addEventListener("change", loadChart);
+
+symbolDropdownBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (symbolDropdown.hidden) openSymbolDropdown();
+  else closeSymbolDropdown();
+});
+
+symbolDropdown.addEventListener("click", (e) => {
+  const opt = e.target.closest(".symbol-option");
+  if (!opt) return;
+  symbolInput.value = opt.dataset.symbol;
+  closeSymbolDropdown();
+  loadChart();
+});
+
+document.addEventListener("click", (e) => {
+  if (!symbolDropdown.hidden && !e.target.closest(".symbol-combo")) closeSymbolDropdown();
+});
+
+(async () => {
+  await loadOptions();
+  await refreshMarketStatus();
+  await loadChart();
+  connectWebSocket();
+  // Fallback refresh: don't rely solely on WebSocket "bars" messages to know
+  // when to re-fetch — if the live stream's broadcast pipeline stalls for
+  // any reason, this keeps the chart catching up to the current time anyway
+  // (each fetch triggers the backend's own staleness self-heal). Skipped
+  // while the market is closed — there's nothing new to catch up on, and
+  // the backend makes no Alpaca calls then anyway, so refetching would just
+  // redraw the same chart every 30s for no reason.
+  setInterval(() => { if (marketOpen) loadChart(); }, 30000);
+  // This one always runs — it's how the app notices the market has reopened
+  // and resumes the chart poll above.
+  setInterval(refreshMarketStatus, 30000);
+})();
+</script>
+</body>
+</html>

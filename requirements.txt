@@ -1,0 +1,13 @@
+alpaca-py>=0.33.0
+pandas>=2.0.0
+numpy>=1.26.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.0
+plotly>=5.22.0
+websockets>=12.0
+
+# Screeners (52-week high/low, market halts) — HTML/XML scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
