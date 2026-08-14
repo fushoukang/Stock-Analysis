@@ -10,7 +10,7 @@ import logging
 
 from alpaca.trading.client import TradingClient
 
-from config import settings, is_within_market_data_window
+from config import settings
 
 logger = logging.getLogger("data.company_names")
 
@@ -37,13 +37,14 @@ def get_company_name(symbol: str) -> str | None:
     if symbol in _cache:
         return _cache[symbol]
 
-    # Asset lookups go through Alpaca's API too — no calls to Alpaca at all
-    # outside the market data window. An uncached symbol just won't show a
-    # company name in the title until the window reopens; the title still
-    # falls back to symbol-only in that case.
-    if not is_within_market_data_window():
-        return None
-
+    # Deliberately NOT gated by is_within_market_data_window(): that gate
+    # exists to stop streaming/bar-data calls outside trading hours (the
+    # thing the user actually asked to restrict), but an asset's display
+    # name is static reference data, not real-time market data — looking it
+    # up via the Trading API's /assets endpoint any time of day doesn't
+    # violate that intent, and it's the fix for company names not showing
+    # while the market is closed. Still a single Alpaca call per symbol
+    # ever, since the result is cached above for the life of the process.
     client = _get_client()
     if client is None:
         return None

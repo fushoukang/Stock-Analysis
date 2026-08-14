@@ -18,6 +18,7 @@ from plotly.subplots import make_subplots
 
 from indicators.compute import OVERLAY_INDICATORS, compute_indicators
 from indicators.moving_average import sma_nm
+from screeners.cnbc import cnbc_quote_url
 
 # The always-on SMA overlay uses the Chinese-TA SMA(N, M) formula (see
 # indicators/moving_average.sma_nm), not a plain arithmetic average.
@@ -95,10 +96,23 @@ def build_candlestick_figure(
 
     last_price = df["close"].iloc[-1] if len(df) else None
     price_suffix = f" — ${last_price:,.2f}" if last_price is not None else ""
-    name_suffix = f" — {company_name}" if company_name else ""
+    # The company name itself is the CNBC quote link — Plotly's title/
+    # annotation text supports a real <a href> tag, which plotly.js renders
+    # as an actual clickable SVG anchor, so this just opens like a normal
+    # link with no custom click handling needed on the frontend. Falls back
+    # to making the symbol the link if no company name was found, so there's
+    # still something clickable in the title either way.
+    cnbc_url = cnbc_quote_url(symbol)
+    cnbc_link = f'<a href="{cnbc_url}" target="_blank">{company_name}</a>' if company_name else None
+    if cnbc_link:
+        name_suffix = f" — {cnbc_link}"
+        symbol_text = symbol
+    else:
+        name_suffix = ""
+        symbol_text = f'<a href="{cnbc_url}" target="_blank">{symbol}</a>'
     # Plotly subplot titles are annotations and support basic HTML-like tags,
     # so <b> makes every box title (price, volume, each indicator) bold.
-    titles = [f"<b>{symbol}{name_suffix}{price_suffix}</b>", "<b>Volume</b>"] + [
+    titles = [f"<b>{symbol_text}{name_suffix}{price_suffix}</b>", "<b>Volume</b>"] + [
         f"<b>{INDICATOR_LABELS.get(i, i.upper())}</b>" for i in indicators
     ]
 

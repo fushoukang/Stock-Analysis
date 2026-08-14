@@ -397,14 +397,27 @@ let lastTitlePrice = null;
 const PRICE_UP_COLOR = "#16a34a";
 const PRICE_DOWN_COLOR = "#dc2626";
 
+// Mirrors screeners/cnbc.py's cnbc_quote_url() exactly.
+function cnbcQuoteUrl(symbol) {
+  return `https://www.cnbc.com/quotes/${symbol.trim().toUpperCase()}`;
+}
+
 function buildPriceTitle(symbol, companyName, price, color) {
-  const nameSuffix = companyName ? ` — ${companyName}` : "";
+  // The company name itself is the CNBC quote link (falls back to linking
+  // the symbol if no company name was found) — must match
+  // charts/candlestick.py's title format exactly, since this rebuilds just
+  // the title text in place on each live price tick without re-fetching
+  // the chart.
+  const cnbcUrl = cnbcQuoteUrl(symbol);
+  const cnbcLink = companyName ? `<a href="${cnbcUrl}" target="_blank">${companyName}</a>` : null;
+  const nameSuffix = cnbcLink ? ` — ${cnbcLink}` : "";
+  const symbolText = cnbcLink ? symbol : `<a href="${cnbcUrl}" target="_blank">${symbol}</a>`;
   let priceSuffix = "";
   if (price !== null && price !== undefined) {
     const priceText = `$${Number(price).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
     priceSuffix = ` — ${color ? `<span style="color:${color}">${priceText}</span>` : priceText}`;
   }
-  return `<b>${symbol}${nameSuffix}${priceSuffix}</b>`;
+  return `<b>${symbolText}${nameSuffix}${priceSuffix}</b>`;
 }
 
 function updateTitlePrice(price) {

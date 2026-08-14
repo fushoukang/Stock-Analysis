@@ -143,7 +143,7 @@ class KDJMonitor:
         if symbol not in self._seeded:
             self._seeded.add(symbol)
             self._last_alert_bar[symbol] = last_ts
-            logger.info(
+            logger.debug(
                 "%s: KDJ monitor baseline set at %s (K=%.2f D=%.2f) — future "
                 "checks will alert on real-time crosses only",
                 symbol, last_ts, kdj_df["k"].iloc[-1], kdj_df["d"].iloc[-1],
