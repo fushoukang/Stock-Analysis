@@ -36,7 +36,7 @@ and computes indicators, but never places, modifies, or cancels orders.
     (high) / > $100M (low), each symbol linking to its CNBC.com quote page.
     Note: TradingView's default view returns a capped, alphabetically-sorted
     subset (~100 rows), not the full universe of that day's movers
-  - **Current Market Halt Stocks** — today's trading halts (up to 5, most
+  - **Current Market Halt Stocks** — today's trading halts (up to 10, most
     recent first) from Nasdaq's official Trade Halt RSS feed
     (`screeners/halts.py`), cached to respect Nasdaq's 1-query-per-minute
     guidance

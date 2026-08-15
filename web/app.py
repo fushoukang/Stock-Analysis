@@ -18,14 +18,19 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings, is_within_market_data_window
 from data.store import BarStore
-from data.historical import fetch_bars, TIMEFRAME_MAP
+from data.historical import fetch_bars, fetch_latest_prices, fetch_previous_closes, TIMEFRAME_MAP
 from data.stream import LiveStreamManager, RAW_TIMEFRAME
 from data.resample import resample_bars, BAR_MINUTES
 from charts.candlestick import build_candlestick_figure
 from data.company_names import get_company_name
 from alerts.kdj_monitor import KDJMonitor, load_monitor_symbols, save_monitor_symbols
 from screeners.tradingview import fetch_52_week_high, fetch_52_week_low, ScreenerError as TVScreenerError
-from screeners.halts import fetch_current_halts, ScreenerError as HaltsScreenerError
+from screeners.halts import (
+    fetch_current_halts,
+    is_volatility_halt,
+    reason_label,
+    ScreenerError as HaltsScreenerError,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("web.app")
@@ -469,14 +474,23 @@ def _mover_to_dict(row) -> dict:
     }
 
 
-def _halt_to_dict(row) -> dict:
+def _halt_to_dict(row, price: float | None = None, direction: str | None = None) -> dict:
     return {
         "symbol": row.symbol,
         "company": row.company,
+        "price": price,
         "halt_date": row.halt_date,
         "halt_time": row.halt_time,
         "market": row.market,
         "reason_code": row.reason_code,
+        "reason_label": reason_label(row.reason_code),
+        "pause_threshold_price": row.pause_threshold_price,
+        # "up"/"down" if this was a price-band (volatility) halt and a prior
+        # close was available to compare against, else None — see
+        # is_volatility_halt() in screeners/halts.py for which reason codes
+        # this applies to (news/regulatory/ETF/market-wide halts aren't
+        # caused by this stock's own price move, so direction doesn't apply).
+        "direction": direction,
         "resumption_date": row.resumption_date,
         "resumption_time": row.resumption_time,
         "currently_halted": row.currently_halted,
@@ -521,7 +535,47 @@ async def screener_halts() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         logger.exception("Trade halts screener failed")
         return JSONResponse({"error": f"Failed to fetch trade halts: {exc}"}, status_code=502)
-    return JSONResponse({"rows": [_halt_to_dict(r) for r in rows]})
+
+    # Current price, unlike the halt data itself, comes from Alpaca (not
+    # CNBC — CNBC.com isn't reachable from this app's network) — so this
+    # part *is* gated by the market data window, same as every other Alpaca
+    # call in the app. Best-effort: if the lookup fails, prices are just
+    # omitted rather than failing the whole screener.
+    prices: dict[str, float] = {}
+    prev_closes: dict[str, float] = {}
+    if rows and is_within_market_data_window() and settings.has_credentials():
+        symbols = [r.symbol for r in rows]
+        try:
+            prices = await asyncio.to_thread(fetch_latest_prices, symbols)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch latest prices for halted symbols", exc_info=True)
+
+        # Only worth fetching for symbols where direction is even meaningful
+        # (volatility/price-band halts with a threshold price to compare).
+        vol_symbols = [
+            r.symbol for r in rows if is_volatility_halt(r.reason_code) and r.pause_threshold_price
+        ]
+        if vol_symbols:
+            try:
+                prev_closes = await asyncio.to_thread(fetch_previous_closes, vol_symbols)
+            except Exception:  # noqa: BLE001
+                logger.warning("Failed to fetch previous closes for halted symbols", exc_info=True)
+
+    def _direction(row) -> str | None:
+        if not is_volatility_halt(row.reason_code) or row.pause_threshold_price is None:
+            return None
+        prev_close = prev_closes.get(row.symbol)
+        if prev_close is None:
+            return None
+        if row.pause_threshold_price > prev_close:
+            return "up"
+        if row.pause_threshold_price < prev_close:
+            return "down"
+        return None
+
+    return JSONResponse(
+        {"rows": [_halt_to_dict(r, prices.get(r.symbol), _direction(r)) for r in rows]}
+    )
 
 
 @app.websocket("/ws")

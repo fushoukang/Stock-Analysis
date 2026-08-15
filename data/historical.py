@@ -11,10 +11,10 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
-from config import settings
+from config import settings, EASTERN
 
 # Map friendly interval strings (also used in the GUI) to alpaca-py TimeFrame objects.
 TIMEFRAME_MAP: dict[str, TimeFrame] = {
@@ -64,3 +64,61 @@ def fetch_bars(
     df = df[["open", "high", "low", "close", "volume"]].sort_index()
     df.index.name = "ts"
     return df
+
+
+def fetch_latest_prices(symbols: list[str]) -> dict[str, float]:
+    """Latest trade price for each symbol, in a single Alpaca REST call.
+    Used by the Current Market Halt Stocks screener (see web/app.py) to show
+    a current price alongside each halted symbol — CNBC.com itself isn't
+    reachable from this app's network, so Alpaca (the app's actual data
+    source) fills that role instead. Symbols Alpaca has no trade for (e.g.
+    an unusual/delisted ticker) are simply omitted from the result rather
+    than raising, so one bad symbol doesn't fail the whole batch."""
+    symbols = [s.strip().upper() for s in symbols if s.strip()]
+    if not symbols:
+        return {}
+    client = get_client()
+    req = StockLatestTradeRequest(symbol_or_symbols=symbols, feed=settings.data_feed_enum())
+    trades = client.get_stock_latest_trade(req)
+    return {sym: trade.price for sym, trade in trades.items() if trade is not None}
+
+
+def fetch_previous_closes(symbols: list[str]) -> dict[str, float]:
+    """Each symbol's most recent daily close strictly before today (US
+    Eastern) — i.e. "yesterday's close" even if today's session is still
+    in progress. Used as the reference price for the Current Market Halt
+    Stocks screener's up/down direction: comparing a volatility halt's
+    PauseThresholdPrice against this tells you whether the halt happened
+    because the stock was spiking up or selling off, relative to where it
+    settled the prior session. One batched Alpaca call for all symbols."""
+    symbols = [s.strip().upper() for s in symbols if s.strip()]
+    if not symbols:
+        return {}
+    client = get_client()
+    start = datetime.now(timezone.utc) - timedelta(days=10)
+    req = StockBarsRequest(
+        symbol_or_symbols=symbols,
+        timeframe=TimeFrame(1, TimeFrameUnit.Day),
+        start=start,
+        feed=settings.data_feed_enum(),
+    )
+    bar_set = client.get_stock_bars(req)
+    df = bar_set.df
+    if df.empty:
+        return {}
+
+    today_et = datetime.now(EASTERN).date()
+    result: dict[str, float] = {}
+    for sym in symbols:
+        try:
+            sub = df.xs(sym, level=0) if isinstance(df.index, pd.MultiIndex) else df
+        except KeyError:
+            continue
+        if sub.empty:
+            continue
+        sub = sub.sort_index()
+        et_dates = sub.index.tz_convert("America/New_York")
+        prior = sub[et_dates.date < today_et]
+        if not prior.empty:
+            result[sym] = float(prior["close"].iloc[-1])
+    return result

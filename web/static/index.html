@@ -186,7 +186,7 @@ const CATEGORY_LABELS = {
 const CATEGORY_SUBTITLES = {
   "52w-high": "Market cap > $1B. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
   "52w-low": "Market cap > $100M. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
-  "halts": "Today's trading halts, most recent first (up to 5). Source: Nasdaq Trade Halt feed.",
+  "halts": "Today's trading halts, most recent first (up to 10). Source: Nasdaq Trade Halt feed. Price via Alpaca — only available during the app's market data hours (6:30 AM–6 PM ET). Direction (▲/▼) is shown only for volatility/price-band halts, comparing the halt's pause threshold price to the prior close — news, regulatory, ETF, and market-wide halts aren't caused by this stock's own price move, so they show —.",
 };
 const CATEGORY_ENDPOINTS = {
   "52w-high": "/api/screener/52w-high",
@@ -224,19 +224,30 @@ function renderMoversTable(rows) {
   }).join("");
 }
 
+function directionBadge(direction) {
+  if (direction === "up") return '<span class="chg-up">▲ Up</span>';
+  if (direction === "down") return '<span class="chg-down">▼ Down</span>';
+  return '<span style="color:#9ca3af">—</span>';
+}
+
 function renderHaltsTable(rows) {
-  screenerThead.innerHTML = "<tr><th>Symbol</th><th>Company</th><th>Halt Date</th><th>Halt Time</th><th>Market</th><th>Reason</th><th>Status</th></tr>";
+  screenerThead.innerHTML = "<tr><th>Symbol</th><th>Company</th><th>Price</th><th>Direction</th><th>Halt Date</th><th>Halt Time</th><th>Market</th><th>Reason</th><th>Status</th></tr>";
   screenerTbody.innerHTML = rows.map((r) => {
     const badge = r.currently_halted
       ? '<span class="halt-badge active">Halted</span>'
       : `<span class="halt-badge resumed">Resumed ${escapeHtml(r.resumption_time || "")}</span>`;
+    const reasonTitle = r.pause_threshold_price != null
+      ? ` title="Pause threshold: $${Number(r.pause_threshold_price).toFixed(2)}"`
+      : "";
     return `<tr>
       <td><a href="${escapeHtml(r.cnbc_url)}" target="_blank" rel="noopener">${escapeHtml(r.symbol)}</a></td>
       <td>${escapeHtml(r.company)}</td>
+      <td>${r.price != null ? "$" + r.price.toFixed(2) : "—"}</td>
+      <td>${directionBadge(r.direction)}</td>
       <td>${escapeHtml(r.halt_date)}</td>
       <td>${escapeHtml(r.halt_time)}</td>
       <td>${escapeHtml(r.market)}</td>
-      <td>${escapeHtml(r.reason_code)}</td>
+      <td${reasonTitle}>${escapeHtml(r.reason_label || r.reason_code)}</td>
       <td>${badge}</td>
     </tr>`;
   }).join("");

@@ -10,7 +10,7 @@ once a minute. Please do not query the data more than once a minute." — this
 module enforces a minimum 60s gap between real network fetches via an
 in-memory cache.
 
-Only today's (US Eastern date) halts are returned, capped at 5, most-recent
+Only today's (US Eastern date) halts are returned, capped at 10, most-recent
 first — per the user's request to keep this list short and current rather
 than showing historical halts.
 """
@@ -31,8 +31,53 @@ FEED_URL = "http://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"
 _NS = {"ndaq": "http://www.nasdaqtrader.com/"}
 _REQUEST_TIMEOUT_SEC = 15
 _MIN_FETCH_INTERVAL_SEC = 60  # Nasdaq's stated rate-limit guidance
-_MAX_RESULTS = 5
+_MAX_RESULTS = 10
 _EASTERN = ZoneInfo("America/New_York")
+
+# Reason code reference: https://www.nasdaqtrader.com/Trader.aspx?id=TradeHaltCodes
+REASON_CODE_LABELS = {
+    "T1": "News Pending",
+    "T2": "News Released",
+    "T3": "News Dissemination / Resumption",
+    "T5": "Volatility Pause (10%+ move in 5 min)",
+    "T6": "Extraordinary Market Activity",
+    "T7": "Single Stock Pause — Quotation Only",
+    "T8": "ETF Halt",
+    "T12": "Additional Info Requested by Nasdaq",
+    "H4": "Non-Compliance with Listing Requirements",
+    "H9": "Filings Not Current",
+    "H10": "SEC Trading Suspension",
+    "H11": "Regulatory Concern",
+    "O1": "Operations Halt",
+    "IPO1": "IPO — Not Yet Trading",
+    "M": "Volatility Trading Pause",
+    "M1": "Corporate Action",
+    "M2": "Quotation Not Available",
+    "LUDP": "Volatility Trading Pause (LULD)",
+    "LUDS": "Volatility Trading Pause — Straddle",
+    "MWC0": "Market-Wide Circuit Breaker (carryover)",
+    "MWC1": "Market-Wide Circuit Breaker — Level 1",
+    "MWC2": "Market-Wide Circuit Breaker — Level 2",
+    "MWC3": "Market-Wide Circuit Breaker — Level 3",
+    "D": "Security Deletion",
+}
+
+# Only these reason codes represent a genuine price-band breach for THIS
+# stock specifically — i.e. "the halt happened because the price moved too
+# fast," which is the only case where comparing PauseThresholdPrice against
+# a reference price can meaningfully say "up" or "down". Excludes news
+# (T1/T2/T3), regulatory/compliance (H-codes), ETF/extraordinary-activity
+# (T6/T8/T12), corporate actions (M1), and market-wide circuit breakers
+# (MWC*, which halt the whole market, not this stock specifically).
+VOLATILITY_REASON_CODES = {"T5", "LUDP", "LUDS", "M"}
+
+
+def reason_label(reason_code: str) -> str:
+    return REASON_CODE_LABELS.get(reason_code, reason_code or "Unknown")
+
+
+def is_volatility_halt(reason_code: str) -> bool:
+    return reason_code in VOLATILITY_REASON_CODES
 
 
 @dataclass
@@ -43,6 +88,7 @@ class HaltRow:
     halt_time: str
     market: str
     reason_code: str
+    pause_threshold_price: float | None
     resumption_date: str
     resumption_time: str
     currently_halted: bool
@@ -83,6 +129,11 @@ def _fetch_and_parse() -> list[HaltRow]:
         if not symbol:
             continue
         resumption_date = _field(item, "ResumptionDate")
+        threshold_text = _field(item, "PauseThresholdPrice")
+        try:
+            threshold_price = float(threshold_text) if threshold_text else None
+        except ValueError:
+            threshold_price = None
         rows.append(
             HaltRow(
                 symbol=symbol.upper(),
@@ -91,6 +142,7 @@ def _fetch_and_parse() -> list[HaltRow]:
                 halt_time=_field(item, "HaltTime"),
                 market=_field(item, "Market"),
                 reason_code=_field(item, "ReasonCode"),
+                pause_threshold_price=threshold_price,
                 resumption_date=resumption_date,
                 resumption_time=_field(item, "ResumptionTradeTime"),
                 currently_halted=not resumption_date,
@@ -121,7 +173,7 @@ def _is_today(halt_date: str, today: datetime) -> bool:
 
 
 def fetch_current_halts() -> list[HaltRow]:
-    """Today's (US Eastern) halts only, most-recent first, capped at 5."""
+    """Today's (US Eastern) halts only, most-recent first, capped at 10."""
     rows = _fetch_cached()
     today = datetime.now(_EASTERN)
 
