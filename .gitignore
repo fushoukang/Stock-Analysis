@@ -18,3 +18,6 @@ wheels/
 # Local SQLite bar cache (regenerated on startup via backfill)
 data_store.db
 
+# User's personal Watchlists data (name/note/symbols) — runtime data, not source
+watchlists.json
+

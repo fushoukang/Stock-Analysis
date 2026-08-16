@@ -95,6 +95,13 @@ class Settings:
         )
     )
     db_path: str = field(default_factory=lambda: os.getenv("DB_PATH", "data_store.db"))
+    # JSON file storing the user's named "Watchlists" (name + note + symbols
+    # each) shown in the GUI's Watchlists category — NOT the same thing as
+    # `watchlist` above, which is just the default set of symbols this app
+    # backfills/streams on startup.
+    watchlists_path: str = field(
+        default_factory=lambda: os.getenv("WATCHLISTS_PATH", "watchlists.json")
+    )
     # "auto" (the default) detects this machine's LAN IPv4 at startup so the
     # GUI is reachable from other devices on the network without hardcoding
     # an address in .env. Set HOST explicitly (e.g. 127.0.0.1) to override.

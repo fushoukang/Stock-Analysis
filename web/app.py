@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import asdict
 from pathlib import Path
 
 import pandas as pd
@@ -23,7 +24,15 @@ from data.stream import LiveStreamManager, RAW_TIMEFRAME
 from data.resample import resample_bars, BAR_MINUTES
 from charts.candlestick import build_candlestick_figure
 from data.company_names import get_company_name
+from data.watchlists import (
+    create_watchlist,
+    delete_watchlist,
+    get_watchlist,
+    load_watchlists,
+    update_watchlist,
+)
 from alerts.kdj_monitor import KDJMonitor, load_monitor_symbols, save_monitor_symbols
+from screeners.cnbc import cnbc_quote_url
 from screeners.tradingview import fetch_52_week_high, fetch_52_week_low, ScreenerError as TVScreenerError
 from screeners.halts import (
     fetch_current_halts,
@@ -576,6 +585,109 @@ async def screener_halts() -> JSONResponse:
     return JSONResponse(
         {"rows": [_halt_to_dict(r, prices.get(r.symbol), _direction(r)) for r in rows]}
     )
+
+
+def _watchlist_body_fields(body: dict) -> tuple[str, str, list[str]] | JSONResponse:
+    """Shared validation for the create/update watchlist request bodies.
+    Returns (name, note, symbols) on success, or a JSONResponse error to
+    return immediately on failure."""
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "Request body must be a JSON object"}, status_code=400)
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return JSONResponse({"error": "A non-empty 'name' is required"}, status_code=400)
+    note = body.get("note") or ""
+    if not isinstance(note, str):
+        return JSONResponse({"error": "'note' must be a string"}, status_code=400)
+    symbols = body.get("symbols") or []
+    if not isinstance(symbols, list) or not all(isinstance(s, str) for s in symbols):
+        return JSONResponse({"error": "'symbols' must be a list of strings"}, status_code=400)
+    return name, note, symbols
+
+
+@app.get("/api/watchlists")
+async def api_list_watchlists() -> JSONResponse:
+    return JSONResponse({"watchlists": [asdict(w) for w in load_watchlists()]})
+
+
+@app.post("/api/watchlists")
+async def api_create_watchlist(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Request body must be JSON"}, status_code=400)
+    parsed = _watchlist_body_fields(body)
+    if isinstance(parsed, JSONResponse):
+        return parsed
+    name, note, symbols = parsed
+    wl = create_watchlist(name, note, symbols)
+    return JSONResponse({"watchlist": asdict(wl)})
+
+
+@app.put("/api/watchlists/{watchlist_id}")
+async def api_update_watchlist(watchlist_id: str, request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Request body must be JSON"}, status_code=400)
+    parsed = _watchlist_body_fields(body)
+    if isinstance(parsed, JSONResponse):
+        return parsed
+    name, note, symbols = parsed
+    wl = update_watchlist(watchlist_id, name, note, symbols)
+    if wl is None:
+        return JSONResponse({"error": "Watchlist not found"}, status_code=404)
+    return JSONResponse({"watchlist": asdict(wl)})
+
+
+@app.delete("/api/watchlists/{watchlist_id}")
+async def api_delete_watchlist(watchlist_id: str) -> JSONResponse:
+    if not delete_watchlist(watchlist_id):
+        return JSONResponse({"error": "Watchlist not found"}, status_code=404)
+    return JSONResponse({"deleted": True})
+
+
+@app.get("/api/watchlists/{watchlist_id}/quotes")
+async def api_watchlist_quotes(watchlist_id: str) -> JSONResponse:
+    """Per-symbol company name + current price + change for one watchlist.
+    Company name is static reference data (always looked up, any time of
+    day — see data/company_names.py). Price/change come from Alpaca and are
+    gated by the market data window like every other Alpaca call in this
+    app; outside it, price/change are simply omitted (null)."""
+    wl = get_watchlist(watchlist_id)
+    if wl is None:
+        return JSONResponse({"error": "Watchlist not found"}, status_code=404)
+
+    symbols = wl.symbols
+    prices: dict[str, float] = {}
+    prev_closes: dict[str, float] = {}
+    if symbols and is_within_market_data_window() and settings.has_credentials():
+        try:
+            prices = await asyncio.to_thread(fetch_latest_prices, symbols)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch latest prices for watchlist %s", watchlist_id, exc_info=True)
+        try:
+            prev_closes = await asyncio.to_thread(fetch_previous_closes, symbols)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch previous closes for watchlist %s", watchlist_id, exc_info=True)
+
+    rows = []
+    for symbol in symbols:
+        price = prices.get(symbol)
+        prev_close = prev_closes.get(symbol)
+        change = price - prev_close if price is not None and prev_close is not None else None
+        change_pct = (change / prev_close * 100) if change is not None and prev_close else None
+        rows.append(
+            {
+                "symbol": symbol,
+                "company": get_company_name(symbol),
+                "price": price,
+                "change": change,
+                "change_pct": change_pct,
+                "cnbc_url": cnbc_quote_url(symbol),
+            }
+        )
+    return JSONResponse({"watchlist": asdict(wl), "rows": rows})
 
 
 @app.websocket("/ws")

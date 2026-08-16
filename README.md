@@ -36,10 +36,24 @@ and computes indicators, but never places, modifies, or cancels orders.
     (high) / > $100M (low), each symbol linking to its CNBC.com quote page.
     Note: TradingView's default view returns a capped, alphabetically-sorted
     subset (~100 rows), not the full universe of that day's movers
-  - **Current Market Halt Stocks** — today's trading halts (up to 10, most
-    recent first) from Nasdaq's official Trade Halt RSS feed
-    (`screeners/halts.py`), cached to respect Nasdaq's 1-query-per-minute
-    guidance
+  - **Current Market Halt Stocks** — today's LULD (Limit Up-Limit Down)
+    volatility halts only (up to 10, most recent first) from Nasdaq's
+    official Trade Halt RSS feed (`screeners/halts.py`); news, regulatory,
+    ETF, and market-wide-circuit-breaker halts are filtered out. Cached to
+    respect Nasdaq's 1-query-per-minute guidance. Shows each symbol's
+    current price and up/down direction (comparing the halt's pause
+    threshold price to the prior close) via Alpaca
+  - **Watchlists** — user-defined named lists of symbols (name + note +
+    symbols each), persisted to `watchlists.json` (`data/watchlists.py`,
+    configurable via `WATCHLISTS_PATH`). Shown as a bar of chips with a "+"
+    to create a new one; selecting a chip shows that list's symbols with
+    company name, current price, and change (price/change via Alpaca,
+    gated by the market data window; company name always available). "Edit
+    The Watchlist" and "Delete The Watchlist" buttons below the table edit
+    or remove the selected list. Distinct from `monitor_list.txt` (the
+    Symbol dropdown's "Edit List" — the list this app actively streams and
+    runs KDJ alerts on): watchlists are just user-organized reference lists,
+    not tied to streaming or alerting
 
 ## Setup
 

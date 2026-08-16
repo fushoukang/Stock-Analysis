@@ -10,9 +10,9 @@ once a minute. Please do not query the data more than once a minute." — this
 module enforces a minimum 60s gap between real network fetches via an
 in-memory cache.
 
-Only today's (US Eastern date) halts are returned, capped at 10, most-recent
-first — per the user's request to keep this list short and current rather
-than showing historical halts.
+Only today's (US Eastern date) LULD/volatility halts are returned (news,
+regulatory, ETF, and market-wide-circuit-breaker halts are filtered out —
+see VOLATILITY_REASON_CODES), capped at 10, most-recent first.
 """
 from __future__ import annotations
 
@@ -173,11 +173,16 @@ def _is_today(halt_date: str, today: datetime) -> bool:
 
 
 def fetch_current_halts() -> list[HaltRow]:
-    """Today's (US Eastern) halts only, most-recent first, capped at 10."""
+    """Today's (US Eastern) LULD/volatility halts only (see
+    VOLATILITY_REASON_CODES — news, regulatory, ETF, and market-wide-circuit-
+    breaker halts are excluded), most-recent first, capped at 10."""
     rows = _fetch_cached()
     today = datetime.now(_EASTERN)
 
-    todays_rows = [r for r in rows if _is_today(r.halt_date, today)]
+    todays_rows = [
+        r for r in rows
+        if _is_today(r.halt_date, today) and is_volatility_halt(r.reason_code)
+    ]
 
     def sort_key(r: HaltRow) -> str:
         return r.halt_time or ""

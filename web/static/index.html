@@ -73,6 +73,38 @@
   .halt-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
   .halt-badge.active { background: #fee2e2; color: #b91c1c; }
   .halt-badge.resumed { background: #dcfce7; color: #15803d; }
+  /* Watchlists category */
+  #watchlists-view { display: none; }
+  #watchlists-view.show { display: block; }
+  #watchlists-page-title { font-size: 22px; font-weight: 700; color: #111827; margin: 0; padding: 18px 20px 0; }
+  #watchlist-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 14px 20px; background: white; border-bottom: 1px solid #e5e7eb; }
+  .watchlist-chip { padding: 8px 18px; font-size: 16px; border-radius: 18px; background: #f3f4f6; color: #374151; cursor: pointer; white-space: nowrap; border: 1px solid transparent; }
+  .watchlist-chip:hover { background: #e5e7eb; }
+  .watchlist-chip.active { background: #2563eb; color: white; }
+  .watchlist-add-chip { background: #eff6ff; color: #2563eb; font-weight: 700; border: 1px dashed #93c5fd; padding: 8px 20px; }
+  .watchlist-add-chip:hover { background: #dbeafe; }
+  #watchlist-empty-msg { padding: 60px 20px; text-align: center; color: #9ca3af; font-size: 16px; }
+  #watchlist-empty-msg[hidden] { display: none; }
+  #watchlist-detail { padding: 0 20px 24px; }
+  #watchlist-detail[hidden] { display: none; }
+  #watchlist-detail-name { font-size: 22px; margin: 16px 0 4px; color: #111827; }
+  #watchlist-detail-note { font-size: 15px; color: #6b7280; margin: 0 0 14px; white-space: pre-wrap; }
+  #watchlist-quotes-msg { font-size: 15px; color: #b45309; margin-bottom: 10px; }
+  #watchlist-table { width: 100%; border-collapse: collapse; background: white; font-size: 16px; }
+  #watchlist-table th { text-align: left; padding: 10px 14px; background: #f3f4f6; color: #374151; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+  #watchlist-table td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+  #watchlist-table tr:hover td { background: #f9fafb; }
+  #watchlist-table a { color: #2563eb; text-decoration: none; font-weight: 600; }
+  #watchlist-table a:hover { text-decoration: underline; }
+  .watchlist-actions { display: flex; gap: 10px; margin-top: 18px; }
+  .watchlist-actions button { padding: 7px 16px; font-size: 13px; cursor: pointer; border-radius: 4px; border: 1px solid #d1d5db; background: white; }
+  .watchlist-actions button.danger { color: #b91c1c; border-color: #fca5a5; }
+  .watchlist-actions button.danger:hover { background: #fef2f2; }
+  /* Watchlist create/edit modal (reuses .modal-overlay/.modal-box) */
+  .modal-field-label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin: 10px 0 4px; }
+  .modal-text-input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; border: 1px solid #d1d5db; border-radius: 4px; text-transform: none; }
+  .modal-box textarea.modal-note-textarea { height: 50px; text-transform: none; font-family: inherit; }
+  #watchlist-modal-msg { font-size: 12px; color: #b45309; margin-top: 8px; min-height: 14px; }
 </style>
 </head>
 <body>
@@ -85,6 +117,7 @@
     <option value="52w-high">52 Week High Stocks</option>
     <option value="52w-low">52 Week Low Stocks</option>
     <option value="halts">Current Market Halt Stocks</option>
+    <option value="watchlists">Watchlists</option>
   </select>
 </header>
 
@@ -119,6 +152,43 @@
   <p id="placeholder-subtitle"></p>
   <div id="screener-msg"></div>
   <div id="screener-table-wrap"><table id="screener-table"><thead id="screener-thead"></thead><tbody id="screener-tbody"></tbody></table></div>
+</div>
+
+<div id="watchlists-view">
+  <h2 id="watchlists-page-title">Current Active Watch Lists</h2>
+  <div id="watchlist-bar"></div>
+  <div id="watchlist-empty-msg">No watchlist selected. Click + to create one.</div>
+  <div id="watchlist-detail" hidden>
+    <h2 id="watchlist-detail-name"></h2>
+    <p id="watchlist-detail-note"></p>
+    <div id="watchlist-quotes-msg"></div>
+    <table id="watchlist-table">
+      <thead><tr><th>Symbol</th><th>Company</th><th>Price</th><th>Change</th></tr></thead>
+      <tbody id="watchlist-tbody"></tbody>
+    </table>
+    <div class="watchlist-actions">
+      <button id="watchlist-edit-btn" type="button">Edit The Watchlist</button>
+      <button id="watchlist-delete-btn" type="button" class="danger">Delete The Watchlist</button>
+    </div>
+  </div>
+</div>
+
+<div id="watchlist-modal-overlay" class="modal-overlay" hidden>
+  <div class="modal-box">
+    <h3 id="watchlist-modal-title">New Watchlist</h3>
+    <p>Symbols: one per line (or comma/space-separated).</p>
+    <label class="modal-field-label" for="watchlist-name-input">Name</label>
+    <input type="text" id="watchlist-name-input" class="modal-text-input" placeholder="e.g. Tech Leaders">
+    <label class="modal-field-label" for="watchlist-note-input">Note</label>
+    <textarea id="watchlist-note-input" class="modal-note-textarea" placeholder="Optional description"></textarea>
+    <label class="modal-field-label" for="watchlist-symbols-input">Symbols</label>
+    <textarea id="watchlist-symbols-input" spellcheck="false"></textarea>
+    <div id="watchlist-modal-msg"></div>
+    <div class="modal-actions">
+      <button id="watchlist-modal-cancel" type="button">Cancel</button>
+      <button id="watchlist-modal-ok" class="primary" type="button">OK</button>
+    </div>
+  </div>
 </div>
 
 <div id="edit-list-overlay" class="modal-overlay" hidden>
@@ -171,6 +241,24 @@ const editListTextarea = document.getElementById("edit-list-textarea");
 const editListMsg = document.getElementById("edit-list-msg");
 const editListCancelBtn = document.getElementById("edit-list-cancel");
 const editListOkBtn = document.getElementById("edit-list-ok");
+const watchlistsView = document.getElementById("watchlists-view");
+const watchlistBar = document.getElementById("watchlist-bar");
+const watchlistEmptyMsg = document.getElementById("watchlist-empty-msg");
+const watchlistDetail = document.getElementById("watchlist-detail");
+const watchlistDetailName = document.getElementById("watchlist-detail-name");
+const watchlistDetailNote = document.getElementById("watchlist-detail-note");
+const watchlistQuotesMsg = document.getElementById("watchlist-quotes-msg");
+const watchlistTbody = document.getElementById("watchlist-tbody");
+const watchlistEditBtn = document.getElementById("watchlist-edit-btn");
+const watchlistDeleteBtn = document.getElementById("watchlist-delete-btn");
+const watchlistModalOverlay = document.getElementById("watchlist-modal-overlay");
+const watchlistModalTitle = document.getElementById("watchlist-modal-title");
+const watchlistNameInput = document.getElementById("watchlist-name-input");
+const watchlistNoteInput = document.getElementById("watchlist-note-input");
+const watchlistSymbolsInput = document.getElementById("watchlist-symbols-input");
+const watchlistModalMsg = document.getElementById("watchlist-modal-msg");
+const watchlistModalCancelBtn = document.getElementById("watchlist-modal-cancel");
+const watchlistModalOkBtn = document.getElementById("watchlist-modal-ok");
 
 // Top-level category dropdown in the header. "Focus Stock Analysis" is the
 // existing chart view. The other three are market screeners: 52-week
@@ -186,7 +274,7 @@ const CATEGORY_LABELS = {
 const CATEGORY_SUBTITLES = {
   "52w-high": "Market cap > $1B. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
   "52w-low": "Market cap > $100M. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
-  "halts": "Today's trading halts, most recent first (up to 10). Source: Nasdaq Trade Halt feed. Price via Alpaca — only available during the app's market data hours (6:30 AM–6 PM ET). Direction (▲/▼) is shown only for volatility/price-band halts, comparing the halt's pause threshold price to the prior close — news, regulatory, ETF, and market-wide halts aren't caused by this stock's own price move, so they show —.",
+  "halts": "Today's LULD (Limit Up-Limit Down) volatility halts only, most recent first (up to 10) — news, regulatory, ETF, and market-wide halts are excluded. Source: Nasdaq Trade Halt feed. Price via Alpaca — only available during the app's market data hours (6:30 AM–6 PM ET). Direction (▲/▼) compares the halt's pause threshold price to the prior close.",
 };
 const CATEGORY_ENDPOINTS = {
   "52w-high": "/api/screener/52w-high",
@@ -231,27 +319,210 @@ function directionBadge(direction) {
 }
 
 function renderHaltsTable(rows) {
-  screenerThead.innerHTML = "<tr><th>Symbol</th><th>Company</th><th>Price</th><th>Direction</th><th>Halt Date</th><th>Halt Time</th><th>Market</th><th>Reason</th><th>Status</th></tr>";
+  screenerThead.innerHTML = "<tr><th>Symbol</th><th>Company</th><th>Price</th><th>Direction</th><th>Halt Date</th><th>Halt Time</th><th>Market</th><th>Status</th></tr>";
   screenerTbody.innerHTML = rows.map((r) => {
     const badge = r.currently_halted
       ? '<span class="halt-badge active">Halted</span>'
       : `<span class="halt-badge resumed">Resumed ${escapeHtml(r.resumption_time || "")}</span>`;
-    const reasonTitle = r.pause_threshold_price != null
+    const directionTitle = r.pause_threshold_price != null
       ? ` title="Pause threshold: $${Number(r.pause_threshold_price).toFixed(2)}"`
       : "";
     return `<tr>
       <td><a href="${escapeHtml(r.cnbc_url)}" target="_blank" rel="noopener">${escapeHtml(r.symbol)}</a></td>
       <td>${escapeHtml(r.company)}</td>
       <td>${r.price != null ? "$" + r.price.toFixed(2) : "—"}</td>
-      <td>${directionBadge(r.direction)}</td>
+      <td${directionTitle}>${directionBadge(r.direction)}</td>
       <td>${escapeHtml(r.halt_date)}</td>
       <td>${escapeHtml(r.halt_time)}</td>
       <td>${escapeHtml(r.market)}</td>
-      <td${reasonTitle}>${escapeHtml(r.reason_label || r.reason_code)}</td>
       <td>${badge}</td>
     </tr>`;
   }).join("");
 }
+
+// Watchlists category: user-defined named lists of symbols (name + note +
+// symbols each), persisted server-side to watchlists.json — see
+// data/watchlists.py and the /api/watchlists* endpoints in web/app.py.
+// Distinct from the Symbol dropdown's "Edit List" (that's monitor_list.txt,
+// the single list of symbols this app actively streams/monitors for KDJ
+// alerts); watchlists are just user-organized reference lists with their
+// own price/change display, not tied to streaming or alerting.
+let watchlists = [];
+let currentWatchlistId = null;
+let watchlistModalMode = "create";
+
+function renderWatchlistBar() {
+  const chips = watchlists.map((w) => (
+    `<div class="watchlist-chip ${w.id === currentWatchlistId ? "active" : ""}" data-id="${w.id}">${escapeHtml(w.name)}</div>`
+  )).join("");
+  watchlistBar.innerHTML = chips
+    + `<div class="watchlist-chip watchlist-add-chip" id="watchlist-add-chip" title="Create a new watchlist">+</div>`;
+}
+
+function changeBadge(change, changePct) {
+  if (change == null) return '<span style="color:#9ca3af">—</span>';
+  const cls = change >= 0 ? "chg-up" : "chg-down";
+  const sign = change >= 0 ? "+" : "";
+  const pctText = changePct != null ? ` (${sign}${changePct.toFixed(2)}%)` : "";
+  return `<span class="${cls}">${sign}${change.toFixed(2)}${pctText}</span>`;
+}
+
+async function loadWatchlists() {
+  try {
+    const res = await fetch("/api/watchlists");
+    const data = await res.json();
+    watchlists = data.watchlists || [];
+  } catch (err) {
+    watchlists = [];
+  }
+  renderWatchlistBar();
+  if (currentWatchlistId && watchlists.some((w) => w.id === currentWatchlistId)) {
+    selectWatchlist(currentWatchlistId);
+  } else if (watchlists.length > 0) {
+    selectWatchlist(watchlists[0].id);
+  } else {
+    currentWatchlistId = null;
+    watchlistDetail.hidden = true;
+    watchlistEmptyMsg.hidden = false;
+  }
+}
+
+async function selectWatchlist(id) {
+  currentWatchlistId = id;
+  renderWatchlistBar();
+  const wl = watchlists.find((w) => w.id === id);
+  if (!wl) return;
+  watchlistEmptyMsg.hidden = true;
+  watchlistDetail.hidden = false;
+  watchlistDetailName.textContent = wl.name;
+  watchlistDetailNote.textContent = wl.note || "";
+  watchlistQuotesMsg.textContent = "Loading…";
+  watchlistTbody.innerHTML = "";
+  try {
+    const res = await fetch(`/api/watchlists/${encodeURIComponent(id)}/quotes`);
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      watchlistQuotesMsg.textContent = data.error || `Failed to load (HTTP ${res.status})`;
+      return;
+    }
+    const rows = data.rows || [];
+    if (rows.length === 0) {
+      watchlistQuotesMsg.textContent = "This watchlist has no symbols yet — click Edit The Watchlist to add some.";
+      return;
+    }
+    watchlistQuotesMsg.textContent = "";
+    watchlistTbody.innerHTML = rows.map((r) => {
+      const companyCell = r.company
+        ? `<a href="${escapeHtml(r.cnbc_url)}" target="_blank" rel="noopener">${escapeHtml(r.company)}</a>`
+        : "—";
+      return `<tr>
+      <td>${escapeHtml(r.symbol)}</td>
+      <td>${companyCell}</td>
+      <td>${r.price != null ? "$" + r.price.toFixed(2) : "—"}</td>
+      <td>${changeBadge(r.change, r.change_pct)}</td>
+    </tr>`;
+    }).join("");
+  } catch (err) {
+    watchlistQuotesMsg.textContent = `Failed to load: ${err}`;
+  }
+}
+
+function openWatchlistModal(mode) {
+  watchlistModalMode = mode;
+  watchlistModalMsg.textContent = "";
+  if (mode === "edit") {
+    const wl = watchlists.find((w) => w.id === currentWatchlistId);
+    if (!wl) return;
+    watchlistModalTitle.textContent = "Edit Watchlist";
+    watchlistNameInput.value = wl.name;
+    watchlistNoteInput.value = wl.note || "";
+    watchlistSymbolsInput.value = wl.symbols.join("\n");
+  } else {
+    watchlistModalTitle.textContent = "New Watchlist";
+    watchlistNameInput.value = "";
+    watchlistNoteInput.value = "";
+    watchlistSymbolsInput.value = "";
+  }
+  watchlistModalOverlay.hidden = false;
+  watchlistNameInput.focus();
+}
+
+function closeWatchlistModal() {
+  watchlistModalOverlay.hidden = true;
+}
+
+async function saveWatchlistModal() {
+  const name = watchlistNameInput.value.trim();
+  if (!name) {
+    watchlistModalMsg.textContent = "Name is required.";
+    return;
+  }
+  const note = watchlistNoteInput.value.trim();
+  const symbols = watchlistSymbolsInput.value
+    .split(/[\s,]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  watchlistModalOkBtn.disabled = true;
+  watchlistModalMsg.textContent = "Saving…";
+  try {
+    const isEdit = watchlistModalMode === "edit";
+    const url = isEdit ? `/api/watchlists/${encodeURIComponent(currentWatchlistId)}` : "/api/watchlists";
+    const res = await fetch(url, {
+      method: isEdit ? "PUT" : "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name, note, symbols}),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      watchlistModalMsg.textContent = data.error || `Failed to save (HTTP ${res.status})`;
+      return;
+    }
+    if (!isEdit) currentWatchlistId = data.watchlist.id;
+    closeWatchlistModal();
+    await loadWatchlists();
+  } catch (err) {
+    watchlistModalMsg.textContent = `Failed to save: ${err}`;
+  } finally {
+    watchlistModalOkBtn.disabled = false;
+  }
+}
+
+async function deleteCurrentWatchlist() {
+  if (!currentWatchlistId) return;
+  const wl = watchlists.find((w) => w.id === currentWatchlistId);
+  const name = wl ? wl.name : "this watchlist";
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/watchlists/${encodeURIComponent(currentWatchlistId)}`, {method: "DELETE"});
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      alert(data.error || `Failed to delete (HTTP ${res.status})`);
+      return;
+    }
+    currentWatchlistId = null;
+    await loadWatchlists();
+  } catch (err) {
+    alert(`Failed to delete: ${err}`);
+  }
+}
+
+watchlistBar.addEventListener("click", (e) => {
+  if (e.target.closest("#watchlist-add-chip")) {
+    openWatchlistModal("create");
+    return;
+  }
+  const chip = e.target.closest(".watchlist-chip[data-id]");
+  if (chip) selectWatchlist(chip.dataset.id);
+});
+
+watchlistEditBtn.addEventListener("click", () => openWatchlistModal("edit"));
+watchlistDeleteBtn.addEventListener("click", deleteCurrentWatchlist);
+watchlistModalCancelBtn.addEventListener("click", closeWatchlistModal);
+watchlistModalOkBtn.addEventListener("click", saveWatchlistModal);
+watchlistModalOverlay.addEventListener("click", (e) => {
+  if (e.target === watchlistModalOverlay) closeWatchlistModal();
+});
 
 async function loadScreener(value) {
   const endpoint = CATEGORY_ENDPOINTS[value];
@@ -283,16 +554,22 @@ async function loadScreener(value) {
 }
 
 function applyCategory(value) {
+  focusView.style.display = value === "focus" ? "" : "none";
+  placeholderView.classList.remove("show");
+  watchlistsView.classList.remove("show");
+
   if (value === "focus") {
-    focusView.style.display = "";
-    placeholderView.classList.remove("show");
-  } else {
-    focusView.style.display = "none";
-    placeholderTitle.textContent = CATEGORY_LABELS[value] || "";
-    placeholderSubtitle.textContent = CATEGORY_SUBTITLES[value] || "";
-    placeholderView.classList.add("show");
-    loadScreener(value);
+    return;
   }
+  if (value === "watchlists") {
+    watchlistsView.classList.add("show");
+    loadWatchlists();
+    return;
+  }
+  placeholderTitle.textContent = CATEGORY_LABELS[value] || "";
+  placeholderSubtitle.textContent = CATEGORY_SUBTITLES[value] || "";
+  placeholderView.classList.add("show");
+  loadScreener(value);
 }
 
 categorySelect.addEventListener("change", () => applyCategory(categorySelect.value));
