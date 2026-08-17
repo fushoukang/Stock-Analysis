@@ -7,6 +7,7 @@ ranges the user asks for in the GUI.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -15,6 +16,8 @@ from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from config import settings, EASTERN
+
+logger = logging.getLogger("data.historical")
 
 # Map friendly interval strings (also used in the GUI) to alpaca-py TimeFrame objects.
 TIMEFRAME_MAP: dict[str, TimeFrame] = {
@@ -83,19 +86,12 @@ def fetch_latest_prices(symbols: list[str]) -> dict[str, float]:
     return {sym: trade.price for sym, trade in trades.items() if trade is not None}
 
 
-def fetch_previous_closes(symbols: list[str]) -> dict[str, float]:
-    """Each symbol's most recent daily close strictly before today (US
-    Eastern) — i.e. "yesterday's close" even if today's session is still
-    in progress. Used as the reference price for the Current Market Halt
-    Stocks screener's up/down direction: comparing a volatility halt's
-    PauseThresholdPrice against this tells you whether the halt happened
-    because the stock was spiking up or selling off, relative to where it
-    settled the prior session. One batched Alpaca call for all symbols."""
-    symbols = [s.strip().upper() for s in symbols if s.strip()]
-    if not symbols:
-        return {}
+def _daily_previous_closes(symbols: list[str], lookback_days: int) -> dict[str, float]:
+    """One batched daily-bar request for all symbols. Returns whatever it
+    finds — callers should treat missing symbols as "try something else",
+    not as "this symbol has no data at all" (see fetch_previous_closes)."""
     client = get_client()
-    start = datetime.now(timezone.utc) - timedelta(days=10)
+    start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     req = StockBarsRequest(
         symbol_or_symbols=symbols,
         timeframe=TimeFrame(1, TimeFrameUnit.Day),
@@ -121,4 +117,68 @@ def fetch_previous_closes(symbols: list[str]) -> dict[str, float]:
         prior = sub[et_dates.date < today_et]
         if not prior.empty:
             result[sym] = float(prior["close"].iloc[-1])
+    return result
+
+
+def _intraday_previous_close_fallback(symbol: str) -> float | None:
+    """Per-symbol fallback when the batched daily-bar request has no data
+    for a symbol. Daily bars and 1-minute bars are two different Alpaca
+    aggregation paths — a thinly-traded symbol (which is exactly what most
+    LULD-halted stocks are, on the free IEX feed) can come up empty on one
+    and still have a handful of 1-minute prints on the other. Pulls a short
+    window of 1-min bars and returns the last close from before today (ET),
+    mirroring the same "previous close" semantics as the daily path."""
+    try:
+        df = fetch_bars(symbol, timeframe="1Min", lookback_days=7, limit=10_000)
+    except Exception:
+        logger.warning("Intraday previous-close fallback failed for %s", symbol, exc_info=True)
+        return None
+    if df.empty:
+        return None
+    today_et = datetime.now(EASTERN).date()
+    et_dates = df.index.tz_convert("America/New_York")
+    prior = df[et_dates.date < today_et]
+    if prior.empty:
+        return None
+    return float(prior["close"].iloc[-1])
+
+
+def fetch_previous_closes(symbols: list[str]) -> dict[str, float]:
+    """Each symbol's most recent close strictly before today (US Eastern) —
+    i.e. "yesterday's close" even if today's session is still in progress.
+    Used as the reference price for the Current Market Halt Stocks
+    screener's up/down direction: comparing a volatility halt's
+    PauseThresholdPrice against this tells you whether the halt happened
+    because the stock was spiking up or selling off, relative to where it
+    settled the prior session.
+
+    Tries one batched daily-bar request for all symbols first (cheap, one
+    API call). LULD-halted stocks are usually thin/illiquid names, so on
+    the free IEX feed the daily aggregate can legitimately have no bars for
+    some of them — for whatever's still missing after that, falls back to a
+    per-symbol 1-minute-bar lookup (see _intraday_previous_close_fallback),
+    which sources from a different Alpaca aggregation path and catches
+    symbols the daily path missed."""
+    symbols = [s.strip().upper() for s in symbols if s.strip()]
+    if not symbols:
+        return {}
+
+    result = _daily_previous_closes(symbols, lookback_days=30)
+    missing = [s for s in symbols if s not in result]
+    if missing:
+        logger.info(
+            "fetch_previous_closes: daily bars missing for %s, trying 1-min fallback", missing
+        )
+        for sym in missing:
+            price = _intraday_previous_close_fallback(sym)
+            if price is not None:
+                result[sym] = price
+
+    still_missing = [s for s in symbols if s not in result]
+    if still_missing:
+        logger.info(
+            "fetch_previous_closes: no previous-close data available at all for %s "
+            "(likely no trades on the free IEX feed for these symbols recently)",
+            still_missing,
+        )
     return result

@@ -560,25 +560,46 @@ async def screener_halts() -> JSONResponse:
             logger.warning("Failed to fetch latest prices for halted symbols", exc_info=True)
 
         # Only worth fetching for symbols where direction is even meaningful
-        # (volatility/price-band halts with a threshold price to compare).
-        vol_symbols = [
-            r.symbol for r in rows if is_volatility_halt(r.reason_code) and r.pause_threshold_price
-        ]
+        # (volatility/price-band halts).
+        vol_symbols = [r.symbol for r in rows if is_volatility_halt(r.reason_code)]
         if vol_symbols:
             try:
                 prev_closes = await asyncio.to_thread(fetch_previous_closes, vol_symbols)
+                logger.info(
+                    "Halts direction: got a previous close for %d/%d volatility-halt symbols",
+                    len(prev_closes), len(vol_symbols),
+                )
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to fetch previous closes for halted symbols", exc_info=True)
+    elif rows:
+        logger.info(
+            "Halts direction skipped: market_open=%s, has_credentials=%s",
+            is_within_market_data_window(), settings.has_credentials(),
+        )
 
     def _direction(row) -> str | None:
-        if not is_volatility_halt(row.reason_code) or row.pause_threshold_price is None:
+        if not is_volatility_halt(row.reason_code):
+            return None
+        # Nasdaq's feed documents PauseThresholdPrice as the halt-triggering
+        # price, but in practice it's routinely left empty even for genuine
+        # volatility halts — relying on it exclusively made Direction show
+        # "—" for effectively everything. Prefer it when present (it's the
+        # most precise reference, the exact halt-moment price), but fall
+        # back to the current Alpaca price (already fetched for the Price
+        # column) otherwise: for a symbol that's still halted, no trades
+        # have happened since, so the latest trade *is* essentially the
+        # halt price.
+        reference = row.pause_threshold_price
+        if reference is None:
+            reference = prices.get(row.symbol)
+        if reference is None:
             return None
         prev_close = prev_closes.get(row.symbol)
         if prev_close is None:
             return None
-        if row.pause_threshold_price > prev_close:
+        if reference > prev_close:
             return "up"
-        if row.pause_threshold_price < prev_close:
+        if reference < prev_close:
             return "down"
         return None
 
