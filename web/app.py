@@ -23,6 +23,7 @@ from data.historical import fetch_bars, fetch_latest_prices, fetch_previous_clos
 from data.stream import LiveStreamManager, RAW_TIMEFRAME
 from data.resample import resample_bars, BAR_MINUTES
 from charts.candlestick import build_candlestick_figure
+from indicators.signals import compute_signals
 from data.company_names import get_company_name
 from data.watchlists import (
     create_watchlist,
@@ -458,18 +459,41 @@ async def get_chart(
     if df.empty:
         return JSONResponse({"error": "no data available for this symbol yet — check the ticker is correct"}, status_code=404)
 
+    indicator_list = [i.strip() for i in indicators.split(",") if i.strip()]
+    company_name = get_company_name(symbol)
+
+    # Bullish/bearish read per indicator (plus the always-on SMA overlay),
+    # each per that indicator's standard textbook rule, evaluated against
+    # the latest bar of this df/timeframe. Computed *before* the figure so
+    # build_candlestick_figure can bake each reading directly into that
+    # indicator's own subplot title/line — previously this rendered in a
+    # separate section below the whole chart, which could scroll out of
+    # view once enough indicator boxes were stacked (2+ selected). Kept in
+    # its own try/except: a bug here should degrade to no trend suffixes,
+    # never take down the whole chart response.
     try:
-        indicator_list = [i.strip() for i in indicators.split(",") if i.strip()]
-        company_name = get_company_name(symbol)
+        signals = compute_signals(df, indicator_list)
+    except Exception:
+        logger.warning(
+            "compute_signals failed for %s (indicators=%s) — chart will render without trend suffixes",
+            symbol, indicator_list, exc_info=True,
+        )
+        signals = {}
+
+    try:
         fig = build_candlestick_figure(
-            df, symbol, timeframe, indicator_list, company_name=company_name
+            df, symbol, timeframe, indicator_list,
+            company_name=company_name, signals=signals,
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+
     # company_name is echoed back (not just baked into the figure's title)
     # so the frontend can rebuild the title text itself on each live price
     # tick without re-fetching/re-rendering the whole chart.
-    return JSONResponse({"figure": fig.to_json(), "company_name": company_name})
+    return JSONResponse(
+        {"figure": fig.to_json(), "company_name": company_name, "signals": signals}
+    )
 
 
 def _mover_to_dict(row) -> dict:

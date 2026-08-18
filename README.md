@@ -11,7 +11,19 @@ and computes indicators, but never places, modifies, or cancels orders.
 - Real-time bar + trade streaming via Alpaca's WebSocket (`alpaca.data.live.StockDataStream`)
 - Historical backfill via Alpaca's REST market data API
 - Local SQLite storage of OHLCV bars
-- Indicators: MA, SMA, EMA, Bollinger Bands (BOLL), RSI, Parabolic SAR, KDJ
+- Indicators: MA, SMA, EMA, Bollinger Bands (BOLL), RSI, Parabolic SAR, KDJ,
+  VWAP (Volume-Weighted Average Price — cumulative, resets each session,
+  computed directly from the bars at whichever timeframe is selected)
+- Trend read (`indicators/signals.py`): a bullish/bearish/neutral score for
+  the always-on SMA overlay plus every currently selected indicator, each
+  scored against that indicator's standard textbook rule (e.g. price vs.
+  EMA, RSI vs. 50/70/30, K vs. D, price vs. VWAP) using only the latest
+  bar. Shown as a colored "— Bullish/Bearish/Neutral" suffix baked directly
+  into that indicator's own subplot title (SMA's reading rides on the
+  price chart's title, since that's where the SMA line is drawn) — kept
+  inside the chart itself rather than a separate section below it, so it
+  can't end up scrolled out of view as more indicator boxes stack up. Not
+  a composite score or backtest, and not investment advice
 - Candlestick charts (Plotly) with indicator overlays and oscillator subplots,
   for multiple time intervals (1Min, 5Min, 15Min, 1Hour, 1Day)
 - Web GUI (FastAPI + Plotly.js) with live updates over a WebSocket. The chart
@@ -22,7 +34,11 @@ and computes indicators, but never places, modifies, or cancels orders.
   rolling 15-minute KDJ every 2 minutes (`KDJ_CHECK_INTERVAL_SEC`) from the
   live 1-min stream, and emails an alert if K and D crossed within the last
   5 minutes (`KDJ_FRESHNESS_WINDOW_MIN`, both configurable in `.env`) — which
-  is the same moment K, D, and J are all equal, since J = 3K − 2D
+  is the same moment K, D, and J are all equal, since J = 3K − 2D. Emails can
+  be turned off entirely with `KDJ_EMAIL_ALERTS_ENABLED=false` in `.env`
+  (default `true`) — the monitor keeps running and detecting crosses either
+  way, and the on-screen WebSocket alert in the GUI keeps firing; only the
+  email is silenced
 - Market data window: Alpaca (WebSocket stream, REST catch-up/backfill, and
   company-name lookups) is only ever contacted between `MARKET_DATA_START_ET`
   and `MARKET_DATA_END_ET` (default 6:30 AM - 6:00 PM ET, Mon-Fri — early +
@@ -83,7 +99,8 @@ and computes indicators, but never places, modifies, or cancels orders.
    (https://myaccount.google.com/apppasswords) — not your normal password.
    `ALERT_EMAIL_TO` controls where the alert goes. Without SMTP credentials
    set, the monitor still runs and logs detected crosses, it just can't
-   email them.
+   email them. Set `KDJ_EMAIL_ALERTS_ENABLED=false` to turn the emails off
+   without touching SMTP credentials or stopping the monitor.
 
 ## Run
 
@@ -116,6 +133,7 @@ indicators/
   rsi.py                 RSI
   sar.py                 Parabolic SAR
   kdj.py                 KDJ
+  vwap.py                 VWAP
   compute.py             aggregator used by the chart builder / API
 charts/
   candlestick.py         Plotly candlestick figure builder

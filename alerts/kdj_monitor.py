@@ -177,7 +177,13 @@ class KDJMonitor:
             f"K and D have crossed, which means K, D, and J are (momentarily) equal."
         )
         logger.info("KDJ cross detected: %s", subject)
-        await asyncio.to_thread(send_email_alert, subject, body)
+        if settings.kdj_email_alerts_enabled:
+            await asyncio.to_thread(send_email_alert, subject, body)
+        else:
+            logger.info(
+                "KDJ_EMAIL_ALERTS_ENABLED is off — skipping email for %s (on-screen alert still fires)",
+                symbol,
+            )
 
         if self.on_alert is not None:
             alert_payload = {

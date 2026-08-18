@@ -32,7 +32,50 @@ INDICATOR_LABELS = {
     "rsi": "RSI",
     "sar": "Parabolic SAR",
     "kdj": "KDJ",
+    "vwap": "VWAP",
 }
+
+# Matches the up/down colors used everywhere else in the app (candle
+# up/down, price title tick color, .chg-up/.chg-down in the GUI).
+TREND_COLORS = {"bullish": "#16a34a", "bearish": "#dc2626", "neutral": "#6b7280"}
+
+
+def _trend_suffix(key: str, signals: dict | None) -> str:
+    """A small colored ' — Bullish/Bearish/Neutral' suffix for a subplot
+    title, sourced from indicators/signals.py's per-indicator read (see
+    web/app.py, which computes `signals` and passes it in here). Returns
+    "" if that indicator's signal isn't available yet (e.g. not enough
+    bars). Appended directly onto each indicator's own subplot title/line,
+    so the trend read is baked into the chart itself and can't end up
+    scrolled out of view the way a separate summary section below a tall,
+    many-indicator chart could. Not used for SMA — see
+    _price_trend_suffix below, since SMA has no subplot title of its own
+    to name it (the title text is just "SMA" there — see
+    INDICATOR_LABELS), it's merged into the price row instead.
+    """
+    if not signals or key not in signals:
+        return ""
+    sig = signals[key]
+    label = sig.get("label", "neutral")
+    color = TREND_COLORS.get(label, TREND_COLORS["neutral"])
+    return f' — <span style="color:{color}">{label.capitalize()}</span>'
+
+
+def _price_trend_suffix(signals: dict | None) -> str:
+    """SMA's trend, appended to the price chart's own title — SMA is
+    merged directly onto the candlestick chart (see SMA_N/SMA_M above)
+    rather than getting its own subplot box like the other indicators, so
+    unlike _trend_suffix() there's no separate title to already name it.
+    The indicator name is spelled out here (SMA(12,2)) so it reads
+    unambiguously, space-and-colon separated from the price part ahead of
+    it, with an arrow pointing from the indicator name to its trend.
+    """
+    if not signals or "sma" not in signals:
+        return ""
+    sig = signals["sma"]
+    label = sig.get("label", "neutral")
+    color = TREND_COLORS.get(label, TREND_COLORS["neutral"])
+    return f' : SMA({SMA_N},{SMA_M}) → <span style="color:{color}">{label.capitalize()}</span>'
 
 
 def build_candlestick_figure(
@@ -42,6 +85,7 @@ def build_candlestick_figure(
     indicators: list[str] | None = None,
     params: dict | None = None,
     company_name: str | None = None,
+    signals: dict | None = None,
 ) -> go.Figure:
     """
     df: OHLCV DataFrame indexed by timestamp.
@@ -54,6 +98,11 @@ def build_candlestick_figure(
     company_name: optional display name for the symbol (e.g. "Apple Inc."),
         shown in the price chart's title alongside the latest price. Omitted
         from the title entirely if not provided (e.g. lookup unavailable).
+    signals: optional {indicator: {"label": ..., "reason": ...}} from
+        indicators/signals.py's compute_signals(). When present, each
+        subplot title gets a colored Bullish/Bearish/Neutral suffix right
+        next to that indicator's own name/line (SMA's reading is appended
+        to the price chart's title, since SMA is drawn there).
     """
     # SMA is always shown merged into the price chart, so it never takes its
     # own box — drop it here if present so it doesn't double up below.
@@ -112,8 +161,15 @@ def build_candlestick_figure(
         symbol_text = f'<a href="{cnbc_url}" target="_blank">{symbol}</a>'
     # Plotly subplot titles are annotations and support basic HTML-like tags,
     # so <b> makes every box title (price, volume, each indicator) bold.
-    titles = [f"<b>{symbol_text}{name_suffix}{price_suffix}</b>", "<b>Volume</b>"] + [
-        f"<b>{INDICATOR_LABELS.get(i, i.upper())}</b>" for i in indicators
+    # The trend suffix (bold-free, colored) rides right after each title so
+    # it reads as part of that box's own line/label rather than bold title
+    # text — SMA's reading rides on the price row since that's where the
+    # SMA line itself is drawn.
+    titles = [
+        f"<b>{symbol_text}{name_suffix}{price_suffix}</b>{_price_trend_suffix(signals)}",
+        "<b>Volume</b>",
+    ] + [
+        f"<b>{INDICATOR_LABELS.get(i, i.upper())}</b>{_trend_suffix(i, signals)}" for i in indicators
     ]
 
     # Keep spacing comfortable but within Plotly's limit (must be < 1/(n_rows-1)).
@@ -153,7 +209,12 @@ def build_candlestick_figure(
 
     colors = ["green" if c >= o else "red" for o, c in zip(df["open"], df["close"])]
     fig.add_trace(
-        go.Bar(x=x_labels, y=df["volume"], name="Volume", marker_color=colors),
+        go.Bar(
+            x=x_labels, y=df["volume"], name="Volume", marker_color=colors,
+            # SI-prefix format (k/M/G) in the hover tooltip so a raw trade
+            # count like 2500000 reads as "2.5M" instead of a long integer.
+            hovertemplate="%{x}<br>Volume: %{y:.2~s}<extra></extra>",
+        ),
         row=2,
         col=1,
     )
@@ -241,6 +302,18 @@ def build_candlestick_figure(
                     row=row,
                     col=1,
                 )
+        elif ind == "vwap":
+            # Cumulative, session-resetting volume-weighted average price,
+            # computed straight from the bars at whatever timeframe is
+            # currently selected (see indicators/vwap.py).
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=results["vwap"], name="VWAP",
+                    line=dict(width=3, color="#8b5cf6"),
+                ),
+                row=row,
+                col=1,
+            )
         row += 1
 
     # Extra absolute pixels for the taller BOLL box, on top of its larger
@@ -259,6 +332,10 @@ def build_candlestick_figure(
     # Categorical axis: fixed number of evenly-spaced ticks so labels don't
     # clutter as more bars accumulate.
     fig.update_xaxes(type="category", nticks=12)
+
+    # Volume y-axis: SI-prefix tick labels (e.g. "2.5M", "800k") instead of
+    # long raw integers.
+    fig.update_yaxes(tickformat=".2~s", row=2, col=1)
 
     # Only the bottom-most subplot needs x-axis tick labels — showing them on
     # every row crowds the gap between each box and the one below it.

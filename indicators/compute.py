@@ -8,9 +8,10 @@ from indicators.bollinger import bollinger_bands
 from indicators.rsi import rsi
 from indicators.sar import parabolic_sar
 from indicators.kdj import kdj
+from indicators.vwap import vwap
 
 # Indicators whose values live on the same scale as price (overlay on candles)
-OVERLAY_INDICATORS = {"sma", "ema", "boll", "sar"}
+OVERLAY_INDICATORS = {"sma", "ema", "boll", "sar", "vwap"}
 # Indicators plotted in their own subplot below the candles
 OSCILLATOR_INDICATORS = {"rsi", "kdj"}
 
@@ -21,6 +22,9 @@ DEFAULT_PARAMS = {
     "rsi": {"period": 14},
     "sar": {"af_step": 0.02, "af_max": 0.2},
     "kdj": {"n": 9, "k_period": 3, "d_period": 3},
+    # VWAP has no tunable params — it's a straight cumulative volume-weighted
+    # average of the bars themselves, resetting each session.
+    "vwap": {},
 }
 
 
@@ -53,6 +57,8 @@ def compute_indicators(
             results["sar"] = parabolic_sar(df, **p)
         elif name == "kdj":
             results["kdj"] = kdj(df, **p)
+        elif name == "vwap":
+            results["vwap"] = vwap(df, **p)
         else:
             raise ValueError(f"Unknown indicator '{name}'")
 

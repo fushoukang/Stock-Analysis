@@ -125,6 +125,13 @@ class Settings:
     kdj_freshness_window_min: int = field(
         default_factory=lambda: int(os.getenv("KDJ_FRESHNESS_WINDOW_MIN", "5"))
     )
+    # Master on/off switch for KDJ cross email alerts. The monitor still runs
+    # and detects/logs crosses either way (and still pushes the on-screen
+    # WebSocket alert) — this only controls whether the email actually goes
+    # out. Set to false to silence emails without disabling the monitor.
+    kdj_email_alerts_enabled: bool = field(
+        default_factory=lambda: _bool_env("KDJ_EMAIL_ALERTS_ENABLED", True)
+    )
     # SMTP credentials used to send the alert email (no MCP mail connector here
     # supports unattended sending — only drafting — so this goes out via plain
     # SMTP). For Gmail: smtp.gmail.com / port 587 / an App Password (not your

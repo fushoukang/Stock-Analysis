@@ -213,7 +213,14 @@ const AVAILABLE_INDICATORS = [
   {id: "rsi", label: "RSI"},
   {id: "sar", label: "SAR"},
   {id: "kdj", label: "KDJ"},
+  {id: "vwap", label: "VWAP"},
 ];
+
+// Matches charts/candlestick.py's TREND_COLORS — used to keep the price
+// title's SMA trend suffix showing the right color on live price ticks
+// (see buildPriceTitle/updateTitlePrice below), without re-fetching the
+// whole chart on every tick.
+const TREND_COLORS = { bullish: "#16a34a", bearish: "#dc2626", neutral: "#6b7280" };
 
 const symbolInput = document.getElementById("symbol");
 const symbolDropdownBtn = document.getElementById("symbol-dropdown-btn");
@@ -609,7 +616,7 @@ async function loadOptions() {
   ]);
   monitorSymbols = symRes.symbols || [];
   renderSymbolDropdown();
-  symbolInput.value = "QQQ"; // NASDAQ index proxy (Alpaca doesn't trade raw index tickers)
+  symbolInput.value = "TQQQ"; // default symbol shown on page load
 
   timeframeSel.innerHTML = tfRes.timeframes.map(t => `<option value="${t}">${t}</option>`).join("");
   timeframeSel.value = "15Min";
@@ -690,7 +697,34 @@ function cnbcQuoteUrl(symbol) {
   return `https://www.cnbc.com/quotes/${symbol.trim().toUpperCase()}`;
 }
 
-function buildPriceTitle(symbol, companyName, price, color) {
+// The SMA trend reading last returned by /api/chart (see loadChart below) —
+// cached the same way titleCompanyName is, so a live price tick can keep
+// showing it (via updateTitlePrice/buildPriceTitle) without recomputing it
+// on every tick. Refreshed on every full chart reload.
+let titleSmaSignal = null;
+
+// Matches charts/candlestick.py's SMA_N/SMA_M — the SMA overlay merged
+// onto the candlestick chart is always SMA(12,2), the Chinese-TA formula,
+// not a plain arithmetic average (see indicators/moving_average.sma_nm).
+const SMA_N = 12;
+const SMA_M = 2;
+
+function smaTrendSuffix(signal) {
+  // Mirrors charts/candlestick.py's _price_trend_suffix() exactly, riding
+  // right after the price title itself (see buildPriceTitle below), so
+  // the indicator's trend reading lives inside the chart's own title
+  // rather than a separate section that could scroll out of view. Space-
+  // and-colon separated (not the em-dash used elsewhere) and names the
+  // indicator — SMA(12,2) — since, unlike the other indicators, it has no
+  // subplot title of its own to already say so, with an arrow pointing
+  // from the indicator name to its trend.
+  if (!signal) return "";
+  const color = TREND_COLORS[signal.label] || TREND_COLORS.neutral;
+  const text = signal.label.charAt(0).toUpperCase() + signal.label.slice(1);
+  return ` : SMA(${SMA_N},${SMA_M}) → <span style="color:${color}">${text}</span>`;
+}
+
+function buildPriceTitle(symbol, companyName, price, color, smaSignal) {
   // The company name itself is the CNBC quote link (falls back to linking
   // the symbol if no company name was found) — must match
   // charts/candlestick.py's title format exactly, since this rebuilds just
@@ -705,7 +739,7 @@ function buildPriceTitle(symbol, companyName, price, color) {
     const priceText = `$${Number(price).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
     priceSuffix = ` — ${color ? `<span style="color:${color}">${priceText}</span>` : priceText}`;
   }
-  return `<b>${symbolText}${nameSuffix}${priceSuffix}</b>`;
+  return `<b>${symbolText}${nameSuffix}${priceSuffix}</b>${smaTrendSuffix(smaSignal)}`;
 }
 
 function updateTitlePrice(price) {
@@ -714,7 +748,7 @@ function updateTitlePrice(price) {
   if (lastTitlePrice !== null && price !== lastTitlePrice) {
     color = price > lastTitlePrice ? PRICE_UP_COLOR : PRICE_DOWN_COLOR;
   }
-  Plotly.relayout("chart", {"annotations[0].text": buildPriceTitle(titleSymbol, titleCompanyName, price, color)});
+  Plotly.relayout("chart", {"annotations[0].text": buildPriceTitle(titleSymbol, titleCompanyName, price, color, titleSmaSignal)});
   lastTitlePrice = price;
 }
 
@@ -744,6 +778,7 @@ async function loadChart() {
     chartRendered = true;
     titleSymbol = symbol;
     titleCompanyName = body.company_name || null;
+    titleSmaSignal = (body.signals && body.signals.sma) || null;
     // Reset the up/down comparison baseline to this chart's actual last
     // close, so the next live tick's color reflects real movement instead
     // of comparing against a stale price from before the reload/symbol switch.
