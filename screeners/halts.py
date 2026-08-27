@@ -80,6 +80,41 @@ def is_volatility_halt(reason_code: str) -> bool:
     return reason_code in VOLATILITY_REASON_CODES
 
 
+def compute_halt_direction(
+    row: "HaltRow", prices: dict[str, float], prev_closes: dict[str, float]
+) -> str | None:
+    """"up"/"down" if this is a volatility (price-band) halt and there's
+    enough data to judge which way the price moved; else None. A module-
+    level function (not a closure inside web/app.py's endpoint) so it can
+    be unit tested directly against synthetic prices/prev_closes dicts,
+    without needing to mock the whole /api/screener/halts request.
+
+    Nasdaq's feed documents PauseThresholdPrice as the halt-triggering
+    price, but in practice it's routinely left empty even for genuine
+    volatility halts — relying on it exclusively made Direction show "—"
+    for effectively everything. Prefer it when present (it's the most
+    precise reference, the exact halt-moment price), but fall back to the
+    current price (`prices`, e.g. from Alpaca) otherwise: for a symbol
+    that's still halted, no trades have happened since, so the latest
+    trade *is* essentially the halt price.
+    """
+    if not is_volatility_halt(row.reason_code):
+        return None
+    reference = row.pause_threshold_price
+    if reference is None:
+        reference = prices.get(row.symbol)
+    if reference is None:
+        return None
+    prev_close = prev_closes.get(row.symbol)
+    if prev_close is None:
+        return None
+    if reference > prev_close:
+        return "up"
+    if reference < prev_close:
+        return "down"
+    return None
+
+
 @dataclass
 class HaltRow:
     symbol: str

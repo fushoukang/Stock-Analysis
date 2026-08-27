@@ -20,6 +20,7 @@ from indicators.rsi import rsi as _rsi
 from indicators.sar import parabolic_sar
 from indicators.kdj import kdj as _kdj
 from indicators.vwap import vwap as _vwap
+from indicators.macd import macd as _macd
 
 logger = logging.getLogger("indicators.signals")
 
@@ -38,6 +39,7 @@ DEFAULT_PARAMS = {
     "rsi": {"period": 14},
     "sar": {"af_step": 0.02, "af_max": 0.2},
     "kdj": {"n": 9, "k_period": 3, "d_period": 3},
+    "macd": {"fast": 12, "slow": 26, "signal": 9},
 }
 
 
@@ -141,6 +143,20 @@ def compute_signals(
                 else:
                     out["boll"] = _signal(NEUTRAL, "Price is exactly at the middle band")
 
+            elif name == "macd":
+                macd_df = _macd(close, **p)
+                m = macd_df["macd"].iloc[-1] if len(macd_df) else float("nan")
+                s = macd_df["signal"].iloc[-1] if len(macd_df) else float("nan")
+                if pd.isna(m) or pd.isna(s):
+                    continue
+                zero_note = " (above the zero line)" if m > 0 else " (below the zero line)"
+                if m > s:
+                    out["macd"] = _signal(BULLISH, f"MACD ({m:.2f}) is above Signal ({s:.2f}){zero_note}")
+                elif m < s:
+                    out["macd"] = _signal(BEARISH, f"MACD ({m:.2f}) is below Signal ({s:.2f}){zero_note}")
+                else:
+                    out["macd"] = _signal(NEUTRAL, "MACD equals Signal")
+
             elif name == "rsi":
                 series = _rsi(close, **p)
                 last = series.iloc[-1] if len(series) else float("nan")
@@ -200,3 +216,41 @@ def compute_signals(
             continue
 
     return out
+
+
+def compute_composite_signal(signals: dict[str, dict]) -> dict | None:
+    """Rolls up whichever per-indicator signals are present (SMA plus
+    whatever's currently selected — exactly `compute_signals()`'s output)
+    into a single majority-vote read: "bullish" if more indicators say
+    bullish than bearish, "bearish" if the reverse, "neutral" on a tie
+    (neutral-labeled indicators don't count toward either side, but do
+    count toward the total). Returns None if `signals` is empty — there's
+    nothing to vote on yet (e.g. not enough bars for any indicator).
+
+    This is deliberately a simple unweighted vote, not a confidence score
+    or backtested weighting — SMA and RSI count the same as each other,
+    for instance. It's meant as an at-a-glance "do most of what's
+    currently showing agree" read, not a trading signal in its own right.
+    """
+    if not signals:
+        return None
+    bullish_count = sum(1 for s in signals.values() if s.get("label") == BULLISH)
+    bearish_count = sum(1 for s in signals.values() if s.get("label") == BEARISH)
+    neutral_count = sum(1 for s in signals.values() if s.get("label") == NEUTRAL)
+    total = bullish_count + bearish_count + neutral_count
+
+    if bullish_count > bearish_count:
+        label = BULLISH
+    elif bearish_count > bullish_count:
+        label = BEARISH
+    else:
+        label = NEUTRAL
+
+    return {
+        "label": label,
+        "reason": f"{bullish_count} bullish, {bearish_count} bearish, {neutral_count} neutral of {total} indicator(s)",
+        "bullish_count": bullish_count,
+        "bearish_count": bearish_count,
+        "neutral_count": neutral_count,
+        "total": total,
+    }

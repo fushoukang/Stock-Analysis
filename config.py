@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from alpaca.data.enums import DataFeed
+from market_holidays import is_market_holiday
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -95,6 +96,16 @@ class Settings:
         )
     )
     db_path: str = field(default_factory=lambda: os.getenv("DB_PATH", "data_store.db"))
+    # How many days of raw 1-min bars to keep in data_store.db before a
+    # periodic background job prunes them (see web/app.py's
+    # _bar_retention_loop). The bars table otherwise grows forever — every
+    # symbol gets a new row every minute the market's open. Must stay well
+    # above every local reader's own lookback need (currently the largest
+    # is the KDJ monitor's 5-day lookback) — the default leaves a wide
+    # margin rather than cutting that close.
+    bar_retention_days: int = field(
+        default_factory=lambda: int(os.getenv("BAR_RETENTION_DAYS", "30"))
+    )
     # JSON file storing the user's named "Watchlists" (name + note + symbols
     # each) shown in the GUI's Watchlists category — NOT the same thing as
     # `watchlist` above, which is just the default set of symbols this app
@@ -191,14 +202,16 @@ def is_within_market_data_window(now: datetime | None = None) -> bool:
     False otherwise. This is the single source of truth for that decision —
     data/stream.py and web/app.py both gate their Alpaca calls on it, so the
     app makes zero API calls to Alpaca outside the configured window
-    (default 6:30 AM - 6:00 PM ET, Mon-Fri).
-
-    Deliberately doesn't know about market holidays (no holiday calendar
-    here) — same trade-off already accepted elsewhere in this app: worst
-    case is one harmless idle-connection attempt on a holiday, not a
-    correctness issue.
+    (default 6:30 AM - 6:00 PM ET, Mon-Fri), including on NYSE/Nasdaq market
+    holidays (see market_holidays.py — a rule-based calendar, so this stays
+    correct in future years without manual updates). Doesn't distinguish
+    early-close half-days (e.g. the day after Thanksgiving) — those are
+    still treated as a normal trading day; Alpaca just won't have data past
+    the actual early close, same as any other day the feed goes quiet.
     """
     now_et = (now or datetime.now(EASTERN)).astimezone(EASTERN)
     if now_et.weekday() >= 5:  # Saturday/Sunday
+        return False
+    if is_market_holiday(now_et.date()):
         return False
     return settings.market_data_start_et <= now_et.time() <= settings.market_data_end_et

@@ -10,22 +10,39 @@ and computes indicators, but never places, modifies, or cancels orders.
 
 - Real-time bar + trade streaming via Alpaca's WebSocket (`alpaca.data.live.StockDataStream`)
 - Historical backfill via Alpaca's REST market data API
-- Local SQLite storage of OHLCV bars
-- Indicators: MA, SMA, EMA, Bollinger Bands (BOLL), RSI, Parabolic SAR, KDJ,
+- Local SQLite storage of OHLCV bars, with a background job (every 6 hours)
+  pruning bars older than `BAR_RETENTION_DAYS` (default 30) so the database
+  doesn't grow unbounded
+- Indicators: MA, SMA, EMA, Bollinger Bands (BOLL), MACD (12/26/9 EMA
+  convergence-divergence, with its own histogram, plotted just ahead of
+  RSI in the indicator checkboxes and chart), RSI, Parabolic SAR, KDJ,
   VWAP (Volume-Weighted Average Price — cumulative, resets each session,
   computed directly from the bars at whichever timeframe is selected)
 - Trend read (`indicators/signals.py`): a bullish/bearish/neutral score for
   the always-on SMA overlay plus every currently selected indicator, each
   scored against that indicator's standard textbook rule (e.g. price vs.
-  EMA, RSI vs. 50/70/30, K vs. D, price vs. VWAP) using only the latest
-  bar. Shown as a colored "— Bullish/Bearish/Neutral" suffix baked directly
-  into that indicator's own subplot title (SMA's reading rides on the
-  price chart's title, since that's where the SMA line is drawn) — kept
-  inside the chart itself rather than a separate section below it, so it
-  can't end up scrolled out of view as more indicator boxes stack up. Not
-  a composite score or backtest, and not investment advice
+  EMA, RSI vs. 50/70/30, K vs. D, price vs. VWAP, MACD vs. Signal) using
+  only the latest bar. Shown as a colored "— Bullish/Bearish/Neutral"
+  suffix baked directly into that indicator's own subplot title (SMA's
+  reading rides on the price chart's title, since that's where the SMA
+  line is drawn) — kept inside the chart itself rather than a separate
+  section below it, so it can't end up scrolled out of view as more
+  indicator boxes stack up. A composite majority-vote rollup across
+  whichever indicators are currently selected (e.g. "Composite: Bullish
+  (5/8)") also rides on the price title, right after SMA's own reading —
+  an unweighted vote, not a confidence score. Each is a single-snapshot
+  read of a standard rule, not a backtest, and not investment advice
 - Candlestick charts (Plotly) with indicator overlays and oscillator subplots,
   for multiple time intervals (1Min, 5Min, 15Min, 1Hour, 1Day)
+- Backtesting (`backtesting.py`, "Run Backtest" button on the Focus Stock
+  Analysis page, `/api/backtest`): simulates a simple long/flat strategy —
+  go long when the composite signal (SMA + EMA/RSI/MACD by default) turns
+  bullish, go flat when it turns bearish — over the symbol's recent history
+  at whatever interval is currently selected. Reports total return, final
+  equity, win rate, and a full trade log in a dismissible panel below the
+  chart. No fees, slippage, position sizing, or shorting — a lightweight
+  sanity check on how the composite signal has historically leaned for a
+  symbol, not a proper walk-forward backtest, and not investment advice
 - Web GUI (FastAPI + Plotly.js) with live updates over a WebSocket. The chart
   title's price updates continuously from individual trade ticks (not just
   once per minute bar close) — a lightweight in-place title update, not a
@@ -39,6 +56,15 @@ and computes indicators, but never places, modifies, or cancels orders.
   (default `true`) — the monitor keeps running and detecting crosses either
   way, and the on-screen WebSocket alert in the GUI keeps firing; only the
   email is silenced
+- KDJ alert history: every cross the monitor detects is persisted to the
+  local SQLite store (`kdj_alerts` table, `BarStore.record_kdj_alert`), not
+  just emailed/pushed live. A background loop (`_kdj_alert_backfill_loop` in
+  `web/app.py`, every 15 minutes) later fills in the price 1 hour and 1 day
+  after each alert, and classifies the move as up/down/flat relative to the
+  price at alert time — a simple outcome read, not a backtest. Browsable via
+  the "KDJ Alert History" category in the header dropdown (`/api/kdj-alerts`,
+  optional `?symbol=`/`?limit=` query params) — "1h Later"/"1d Later" show
+  "pending…" until enough time has passed for that bar to exist
 - Market data window: Alpaca (WebSocket stream, REST catch-up/backfill, and
   company-name lookups) is only ever contacted between `MARKET_DATA_START_ET`
   and `MARKET_DATA_END_ET` (default 6:30 AM - 6:00 PM ET, Mon-Fri — early +
@@ -63,13 +89,17 @@ and computes indicators, but never places, modifies, or cancels orders.
     symbols each), persisted to `watchlists.json` (`data/watchlists.py`,
     configurable via `WATCHLISTS_PATH`). Shown as a bar of chips with a "+"
     to create a new one; selecting a chip shows that list's symbols with
-    company name, current price, and change (price/change via Alpaca,
-    gated by the market data window; company name always available). "Edit
-    The Watchlist" and "Delete The Watchlist" buttons below the table edit
-    or remove the selected list. Distinct from `monitor_list.txt` (the
-    Symbol dropdown's "Edit List" — the list this app actively streams and
-    runs KDJ alerts on): watchlists are just user-organized reference lists,
-    not tied to streaming or alerting
+    company name, current price, change, and a Trend column (price/change/
+    trend via Alpaca, gated by the market data window; company name always
+    available). Trend is the same composite majority-vote read described
+    above (SMA + EMA + RSI + MACD on 5-minute bars), shown as a colored
+    "Bullish/Bearish/Neutral (agree/total)" pill — a quick per-symbol scan
+    across the whole list without opening each chart. "Edit The Watchlist"
+    and "Delete The Watchlist" buttons below the table edit or remove the
+    selected list. Distinct from `monitor_list.txt` (the Symbol dropdown's
+    "Edit List" — the list this app actively streams and runs KDJ alerts
+    on): watchlists are just user-organized reference lists, not tied to
+    streaming or alerting
 
 ## Setup
 
@@ -130,22 +160,43 @@ data/
 indicators/
   moving_average.py     SMA, EMA, MA
   bollinger.py           Bollinger Bands
+  macd.py                 MACD
   rsi.py                 RSI
   sar.py                 Parabolic SAR
   kdj.py                 KDJ
   vwap.py                 VWAP
   compute.py             aggregator used by the chart builder / API
+  signals.py              per-indicator bullish/bearish trend read
 charts/
   candlestick.py         Plotly candlestick figure builder
 alerts/
   email_alert.py          SMTP email sending
   kdj_monitor.py           resample -> KDJ -> cross detection -> alert, on a loop
+backtesting.py          long/flat strategy simulation driven by the composite signal
 web/
   app.py                 FastAPI app: REST + WebSocket + static GUI
   static/index.html      browser GUI
 main.py                 entry point (uvicorn)
 monitor_list.txt        symbols the KDJ monitor watches
 ```
+
+## Tests
+
+```
+pip install -r requirements.txt
+pytest
+```
+
+Covers the pure-logic modules: indicator math (`indicators/`), the
+composite signal's per-rule correctness and fault-isolation guarantee
+(`indicators/signals.py` — one indicator's exception must never wipe out
+signals already computed for the others), KDJ cross detection and
+monitor-list read/write, the halts screener's direction logic, watchlists
+CRUD round-trips, the rule-based market holiday calendar, `BarStore`
+(bar upsert/prune, KDJ alert record/backfill), and the backtesting engine.
+Doesn't cover the FastAPI endpoints themselves end-to-end or the frontend
+JS — those are verified manually (`TestClient` + `node --check` during
+development) rather than as part of this pytest suite.
 
 ## Notes / next steps
 
@@ -157,7 +208,11 @@ monitor_list.txt        symbols the KDJ monitor watches
   Add auth before exposing it beyond localhost.
 - IEX (free) data feed is the default; switch `ALPACA_DATA_FEED=sip` in
   `.env` if you have a SIP subscription for full-market data.
-- The market data window (`MARKET_DATA_START_ET`/`MARKET_DATA_END_ET`)
-  doesn't know about market holidays — on a holiday the app will still try
-  to connect during the configured window; Alpaca just won't have new data.
-  Same accepted trade-off used elsewhere in this app's market-hours logic.
+- The market data window (`MARKET_DATA_START_ET`/`MARKET_DATA_END_ET`) now
+  also checks a rule-based NYSE/Nasdaq holiday calendar (`market_holidays.py`
+  — New Year's, MLK Day, Presidents Day, Good Friday, Memorial Day,
+  Juneteenth, Independence Day, Labor Day, Thanksgiving, Christmas, with the
+  standard weekend-observed shift), so the app makes zero Alpaca calls on
+  market holidays, not just weekends. It doesn't model early-close
+  half-days (e.g. the day after Thanksgiving) — those are still treated as
+  a normal full trading day.

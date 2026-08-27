@@ -23,7 +23,8 @@ from data.historical import fetch_bars, fetch_latest_prices, fetch_previous_clos
 from data.stream import LiveStreamManager, RAW_TIMEFRAME
 from data.resample import resample_bars, BAR_MINUTES
 from charts.candlestick import build_candlestick_figure
-from indicators.signals import compute_signals
+from indicators.signals import compute_signals, compute_composite_signal
+from backtesting import run_backtest, BacktestError
 from data.company_names import get_company_name
 from data.watchlists import (
     create_watchlist,
@@ -39,6 +40,7 @@ from screeners.halts import (
     fetch_current_halts,
     is_volatility_halt,
     reason_label,
+    compute_halt_direction,
     ScreenerError as HaltsScreenerError,
 )
 
@@ -73,6 +75,44 @@ async def _backfill_all_symbols(symbols: list[str]) -> None:
             logger.warning("Historical backfill failed for %s: %s", symbol, exc)
 
 
+_BAR_PRUNE_INTERVAL_SEC = 6 * 60 * 60  # every 6 hours
+
+
+async def _bar_retention_loop() -> None:
+    """Periodically deletes bars older than settings.bar_retention_days from
+    the local SQLite store (see BarStore.prune_old_bars) — without this,
+    data_store.db only ever grows, since the live stream inserts a new row
+    per symbol every minute the market's open and nothing else removes old
+    ones. Runs once immediately (in case the app's been down a while and a
+    backlog built up before this loop existed), then on a fixed interval —
+    deliberately not tied to the market data window, since pruning is cheap
+    local disk I/O, not an Alpaca API call."""
+    while True:
+        try:
+            await asyncio.to_thread(store.prune_old_bars, settings.bar_retention_days)
+        except Exception:
+            logger.exception("Bar retention prune failed")
+        await asyncio.sleep(_BAR_PRUNE_INTERVAL_SEC)
+
+
+_KDJ_ALERT_BACKFILL_INTERVAL_SEC = 15 * 60  # every 15 minutes
+
+
+async def _kdj_alert_backfill_loop() -> None:
+    """Periodically fills in each KDJ alert's price_1h/price_1d/outcome_1h/
+    outcome_1d once enough wall-clock time has passed (see
+    BarStore.backfill_kdj_alert_outcomes) — lets the KDJ Alert History view
+    show whether price actually moved the direction each past cross
+    implied. Independent of Alpaca credentials: it only reads/writes bars
+    and alerts already sitting in the local SQLite store."""
+    while True:
+        try:
+            await asyncio.to_thread(store.backfill_kdj_alert_outcomes, RAW_TIMEFRAME)
+        except Exception:
+            logger.exception("KDJ alert outcome backfill failed")
+        await asyncio.sleep(_KDJ_ALERT_BACKFILL_INTERVAL_SEC)
+
+
 async def _market_hours_loop(all_symbols: list[str]) -> None:
     """Polls the market data window and reacts to transitions: backfills
     once right when it opens (covering the case where the app was started,
@@ -100,6 +140,12 @@ async def _market_hours_loop(all_symbols: list[str]) -> None:
 @app.on_event("startup")
 async def on_startup() -> None:
     global stream_manager, _market_window_open
+
+    # Local DB maintenance, independent of Alpaca credentials — runs
+    # regardless of whether the rest of startup bails out below.
+    asyncio.create_task(_bar_retention_loop())
+    asyncio.create_task(_kdj_alert_backfill_loop())
+
     if not settings.has_credentials():
         logger.warning(
             "ALPACA_API_KEY / ALPACA_SECRET_KEY not set — running with no live "
@@ -378,6 +424,43 @@ def _load_symbol_df(symbol: str, timeframe: str, limit: int):
     return fetch_bars(symbol, timeframe=timeframe, lookback_days=lookback_days, limit=limit)
 
 
+# Fixed indicator set/timeframe for the Watchlists table's Trend column —
+# deliberately not user-configurable per row (unlike the Focus Stock
+# Analysis page's checkboxes), so a watchlist's per-symbol cost stays
+# bounded regardless of how many symbols it has. 5Min keeps MACD's 26+9
+# lookback and Bollinger/RSI's ~14-20 period comfortably covered within
+# WATCHLIST_TREND_BAR_LIMIT bars.
+WATCHLIST_TREND_TIMEFRAME = "5Min"
+WATCHLIST_TREND_INDICATORS = ["ema", "rsi", "macd"]
+WATCHLIST_TREND_BAR_LIMIT = 100
+
+
+def _symbol_trend(symbol: str) -> dict | None:
+    """Composite bullish/bearish/neutral read for one symbol (the always-on
+    SMA plus WATCHLIST_TREND_INDICATORS), reusing the same
+    compute_signals/compute_composite_signal machinery as the Focus Stock
+    Analysis chart. Returns None — never raises — if bars aren't available
+    yet or anything about the read fails, so one bad symbol can't break
+    the whole watchlist listing."""
+    try:
+        df = _load_symbol_df(symbol, WATCHLIST_TREND_TIMEFRAME, WATCHLIST_TREND_BAR_LIMIT)
+        if df.empty:
+            return None
+        signals = compute_signals(df, WATCHLIST_TREND_INDICATORS)
+        return compute_composite_signal(signals)
+    except Exception:
+        logger.warning("Trend computation failed for watchlist symbol %s", symbol, exc_info=True)
+        return None
+
+
+def _compute_watchlist_trends(symbols: list[str]) -> dict[str, dict | None]:
+    """Sequential per-symbol trend computation, meant to be run inside a
+    single asyncio.to_thread() call from the async endpoint below — bundles
+    every symbol's (synchronous, local-SQLite-bound) work into one
+    background-thread hop instead of one hop per symbol."""
+    return {symbol: _symbol_trend(symbol) for symbol in symbols}
+
+
 @app.get("/api/debug/{symbol}")
 async def debug_symbol(symbol: str) -> JSONResponse:
     """Diagnostic: shows exactly how stale local data is for a symbol and
@@ -480,10 +563,16 @@ async def get_chart(
         )
         signals = {}
 
+    # Majority-vote rollup across whatever signals came back above — "do
+    # most of the currently-showing indicators agree" at a glance. None if
+    # `signals` is empty (compute_signals failed, or nothing has enough
+    # bars yet).
+    composite = compute_composite_signal(signals)
+
     try:
         fig = build_candlestick_figure(
             df, symbol, timeframe, indicator_list,
-            company_name=company_name, signals=signals,
+            company_name=company_name, signals=signals, composite=composite,
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -492,8 +581,47 @@ async def get_chart(
     # so the frontend can rebuild the title text itself on each live price
     # tick without re-fetching/re-rendering the whole chart.
     return JSONResponse(
-        {"figure": fig.to_json(), "company_name": company_name, "signals": signals}
+        {
+            "figure": fig.to_json(),
+            "company_name": company_name,
+            "signals": signals,
+            "composite": composite,
+        }
     )
+
+
+@app.get("/api/backtest")
+async def api_backtest(
+    symbol: str, timeframe: str = "5Min", indicators: str = "", limit: int = 500
+) -> JSONResponse:
+    """Runs backtesting.run_backtest() over this symbol's historical bars —
+    see that module's docstring for exactly what strategy it simulates
+    (long/flat, driven by the composite signal) and its limitations (no
+    fees/slippage/position-sizing; not investment advice). `indicators` is
+    a comma-separated list, e.g. 'ema,rsi,macd' — defaults to
+    backtesting.DEFAULT_BACKTEST_INDICATORS if omitted."""
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return JSONResponse({"error": "symbol is required"}, status_code=400)
+
+    try:
+        df = _load_symbol_df(symbol, timeframe, limit)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    if df.empty:
+        return JSONResponse({"error": "no data available for this symbol yet — check the ticker is correct"}, status_code=404)
+
+    indicator_list = [i.strip() for i in indicators.split(",") if i.strip()] or None
+
+    try:
+        result = await asyncio.to_thread(run_backtest, df, indicator_list)
+    except BacktestError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Backtest failed for %s", symbol)
+        return JSONResponse({"error": f"Backtest failed: {exc}"}, status_code=500)
+
+    return JSONResponse({"symbol": symbol, "timeframe": timeframe, **result})
 
 
 def _mover_to_dict(row) -> dict:
@@ -601,35 +729,30 @@ async def screener_halts() -> JSONResponse:
             is_within_market_data_window(), settings.has_credentials(),
         )
 
-    def _direction(row) -> str | None:
-        if not is_volatility_halt(row.reason_code):
-            return None
-        # Nasdaq's feed documents PauseThresholdPrice as the halt-triggering
-        # price, but in practice it's routinely left empty even for genuine
-        # volatility halts — relying on it exclusively made Direction show
-        # "—" for effectively everything. Prefer it when present (it's the
-        # most precise reference, the exact halt-moment price), but fall
-        # back to the current Alpaca price (already fetched for the Price
-        # column) otherwise: for a symbol that's still halted, no trades
-        # have happened since, so the latest trade *is* essentially the
-        # halt price.
-        reference = row.pause_threshold_price
-        if reference is None:
-            reference = prices.get(row.symbol)
-        if reference is None:
-            return None
-        prev_close = prev_closes.get(row.symbol)
-        if prev_close is None:
-            return None
-        if reference > prev_close:
-            return "up"
-        if reference < prev_close:
-            return "down"
-        return None
-
     return JSONResponse(
-        {"rows": [_halt_to_dict(r, prices.get(r.symbol), _direction(r)) for r in rows]}
+        {
+            "rows": [
+                _halt_to_dict(r, prices.get(r.symbol), compute_halt_direction(r, prices, prev_closes))
+                for r in rows
+            ]
+        }
     )
+
+
+@app.get("/api/kdj-alerts")
+async def api_kdj_alerts(symbol: str | None = None, limit: int = 100) -> JSONResponse:
+    """History of past KDJ cross alerts (see alerts/kdj_monitor.py and
+    BarStore.record_kdj_alert/get_kdj_alerts). Independent of Alpaca and
+    the market data window — this just reads the local SQLite store.
+    `price_1h`/`price_1d`/`outcome_1h`/`outcome_1d` are null until
+    _kdj_alert_backfill_loop has had enough elapsed time to fill them in."""
+    limit = max(1, min(limit, 500))
+    try:
+        rows = await asyncio.to_thread(store.get_kdj_alerts, symbol, limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to load KDJ alert history")
+        return JSONResponse({"error": f"Failed to load KDJ alert history: {exc}"}, status_code=500)
+    return JSONResponse({"rows": rows})
 
 
 def _watchlist_body_fields(body: dict) -> tuple[str, str, list[str]] | JSONResponse:
@@ -716,6 +839,22 @@ async def api_watchlist_quotes(watchlist_id: str) -> JSONResponse:
         except Exception:  # noqa: BLE001
             logger.warning("Failed to fetch previous closes for watchlist %s", watchlist_id, exc_info=True)
 
+    # Composite Trend read per symbol (see _symbol_trend above) — best
+    # effort, like price/change above: never fails the whole listing, just
+    # comes back null for symbols it couldn't compute yet (e.g. brand new
+    # to the store, insufficient bars). Also starts streaming any symbol
+    # not already subscribed, same as viewing it on the Focus Stock
+    # Analysis page would, so the trend/price stay live going forward.
+    trends: dict[str, dict | None] = {}
+    if symbols:
+        if stream_manager is not None:
+            for symbol in symbols:
+                stream_manager.subscribe_symbol(symbol)
+        try:
+            trends = await asyncio.to_thread(_compute_watchlist_trends, symbols)
+        except Exception:  # noqa: BLE001
+            logger.warning("Trend computation failed for watchlist %s", watchlist_id, exc_info=True)
+
     rows = []
     for symbol in symbols:
         price = prices.get(symbol)
@@ -730,6 +869,7 @@ async def api_watchlist_quotes(watchlist_id: str) -> JSONResponse:
                 "change": change,
                 "change_pct": change_pct,
                 "cnbc_url": cnbc_quote_url(symbol),
+                "trend": trends.get(symbol),
             }
         )
     return JSONResponse({"watchlist": asdict(wl), "rows": rows})

@@ -29,6 +29,7 @@ INDICATOR_LABELS = {
     "sma": "SMA",
     "ema": "EMA",
     "boll": "Bollinger Bands",
+    "macd": "MACD",
     "rsi": "RSI",
     "sar": "Parabolic SAR",
     "kdj": "KDJ",
@@ -78,6 +79,33 @@ def _price_trend_suffix(signals: dict | None) -> str:
     return f' : SMA({SMA_N},{SMA_M}) → <span style="color:{color}">{label.capitalize()}</span>'
 
 
+def _composite_trend_suffix(composite: dict | None) -> str:
+    """The majority-vote composite read (indicators/signals.py's
+    compute_composite_signal) appended after the SMA trend on the price
+    chart's title — e.g. " | Composite: Bullish (5/7)", where the count is
+    however many of the total agreed with the winning label (so "Bearish
+    (5/7)" reads as 5 of 7 indicators were bearish, not a mismatched
+    bullish count next to a bearish label). Distinguished from the
+    per-indicator suffixes with a "|" separator and its own explicit
+    label, since it summarizes ALL the other signals rather than being one
+    indicator's own reading.
+    """
+    if not composite:
+        return ""
+    label = composite.get("label", "neutral")
+    color = TREND_COLORS.get(label, TREND_COLORS["neutral"])
+    total = composite.get("total", 0)
+    agree = {
+        "bullish": composite.get("bullish_count", 0),
+        "bearish": composite.get("bearish_count", 0),
+        "neutral": composite.get("neutral_count", 0),
+    }.get(label, 0)
+    return (
+        f' | Composite: <span style="color:{color}">{label.capitalize()}</span>'
+        f" ({agree}/{total})"
+    )
+
+
 def build_candlestick_figure(
     df: pd.DataFrame,
     symbol: str,
@@ -86,6 +114,7 @@ def build_candlestick_figure(
     params: dict | None = None,
     company_name: str | None = None,
     signals: dict | None = None,
+    composite: dict | None = None,
 ) -> go.Figure:
     """
     df: OHLCV DataFrame indexed by timestamp.
@@ -103,6 +132,10 @@ def build_candlestick_figure(
         subplot title gets a colored Bullish/Bearish/Neutral suffix right
         next to that indicator's own name/line (SMA's reading is appended
         to the price chart's title, since SMA is drawn there).
+    composite: optional {"label": ..., "bullish_count": ..., "total": ...}
+        from indicators/signals.py's compute_composite_signal() — the
+        majority-vote rollup across `signals`, appended to the price
+        chart's title right after SMA's own reading.
     """
     # SMA is always shown merged into the price chart, so it never takes its
     # own box — drop it here if present so it doesn't double up below.
@@ -166,7 +199,7 @@ def build_candlestick_figure(
     # text — SMA's reading rides on the price row since that's where the
     # SMA line itself is drawn.
     titles = [
-        f"<b>{symbol_text}{name_suffix}{price_suffix}</b>{_price_trend_suffix(signals)}",
+        f"<b>{symbol_text}{name_suffix}{price_suffix}</b>{_price_trend_suffix(signals)}{_composite_trend_suffix(composite)}",
         "<b>Volume</b>",
     ] + [
         f"<b>{INDICATOR_LABELS.get(i, i.upper())}</b>{_trend_suffix(i, signals)}" for i in indicators
@@ -211,9 +244,11 @@ def build_candlestick_figure(
     fig.add_trace(
         go.Bar(
             x=x_labels, y=df["volume"], name="Volume", marker_color=colors,
-            # SI-prefix format (k/M/G) in the hover tooltip so a raw trade
-            # count like 2500000 reads as "2.5M" instead of a long integer.
-            hovertemplate="%{x}<br>Volume: %{y:.2~s}<extra></extra>",
+            # SI-prefix format (k/M/G) so a raw trade count like 2500000
+            # reads as "2.5M" instead of a long integer. No leading "%{x}"
+            # here — hovermode="x unified" (set below) already shows the
+            # shared timestamp once, at the top of the merged tooltip.
+            hovertemplate="Volume: %{y:.2~s}<extra></extra>",
         ),
         row=2,
         col=1,
@@ -283,6 +318,42 @@ def build_candlestick_figure(
                 row=row,
                 col=1,
             )
+        elif ind == "macd":
+            macd_df = results["macd"]
+            hist_colors = ["green" if v >= 0 else "red" for v in macd_df["histogram"].fillna(0)]
+            fig.add_trace(
+                go.Bar(
+                    x=x_labels, y=macd_df["histogram"], name="Histogram",
+                    marker_color=hist_colors, showlegend=False,
+                    # Compact hover text (name + 3dp value, no separate
+                    # trace-color callout box) — see the shared
+                    # hovermode="x unified" set below, which is what
+                    # actually keeps the tooltip from sitting on top of
+                    # the line/bar the cursor is over.
+                    hovertemplate="Histogram: %{y:.3f}<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=macd_df["macd"], name="MACD",
+                    line=dict(width=3, color="#2563eb"),
+                    hovertemplate="MACD: %{y:.3f}<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=macd_df["signal"], name="Signal",
+                    line=dict(width=2, color="#f59e0b"),
+                    hovertemplate="Signal: %{y:.3f}<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+            fig.add_hline(y=0, line=dict(dash="dash", width=1), row=row, col=1)
         elif ind == "rsi":
             fig.add_trace(
                 go.Scatter(x=x_labels, y=results["rsi"], name="RSI", line=dict(width=3)),
@@ -327,6 +398,14 @@ def build_candlestick_figure(
         margin=dict(l=20, r=100, t=40, b=20),
         legend=dict(orientation="h"),
         template="plotly_white",
+        # "x unified" merges every trace's hover text at the cursor's x
+        # position into one compact box off to the side, instead of a
+        # separate floating tooltip sitting right on top of each trace
+        # (default "closest" mode) — on boxes like MACD with several
+        # overlapping traces (histogram + MACD line + Signal line) at the
+        # same x, those stacked boxes were covering the very lines/colors
+        # they described.
+        hovermode="x unified",
     )
 
     # Categorical axis: fixed number of evenly-spaced ticks so labels don't

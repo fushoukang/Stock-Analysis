@@ -15,6 +15,9 @@ wheels/
 # OS cruft
 .DS_Store
 
+# IDE settings
+.idea/
+
 # Local SQLite bar cache (regenerated on startup via backfill)
 data_store.db
 

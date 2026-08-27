@@ -20,6 +20,7 @@ through results.
 """
 from __future__ import annotations
 
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ from bs4 import BeautifulSoup
 
 from screeners.cnbc import cnbc_quote_url
 from screeners.market_cap import parse_market_cap
+
+logger = logging.getLogger("screeners.tradingview")
 
 HIGH_URL = "https://www.tradingview.com/markets/stocks-usa/market-movers-52wk-high/"
 LOW_URL = "https://www.tradingview.com/markets/stocks-usa/market-movers-52wk-low/"
@@ -171,6 +174,31 @@ def _fetch_and_parse(url: str) -> list[MoverRow]:
         raise ScreenerError(
             f"Found the data table at {url} but parsed zero rows from it — "
             "TradingView may have changed their row markup."
+        )
+
+    # Sanity check: rows can parse "successfully" (a symbol + company found)
+    # while still silently losing the market_cap/price/change_pct fields, if
+    # TradingView tweaks the cell text format the regexes above match
+    # against (e.g. a currency-symbol change, or a unit-suffix change like
+    # "M USD" -> "M"). That failure mode doesn't raise anything above — it
+    # just means fetch_52_week_high/low's `market_cap is not None` filter
+    # quietly returns an empty list, which looks identical in the GUI to
+    # "no stocks currently qualify" rather than "the scraper is broken".
+    # Surface it loudly instead once the miss rate is high enough that it's
+    # clearly a markup change, not just a few rows with genuinely missing data.
+    missing_cap = sum(1 for r in rows if r.market_cap is None)
+    miss_rate = missing_cap / len(rows)
+    if miss_rate == 1.0:
+        raise ScreenerError(
+            f"Parsed {len(rows)} rows from {url} but extracted a market cap "
+            "from none of them — TradingView likely changed the cell format "
+            "the market-cap parser expects (see _MARKET_CAP_RE in this file)."
+        )
+    if miss_rate > 0.5:
+        logger.warning(
+            "TradingView scraper (%s): market cap missing for %d/%d rows (%.0f%%) "
+            "— possible partial markup drift; results may be incomplete.",
+            url, missing_cap, len(rows), miss_rate * 100,
         )
     return rows
 
