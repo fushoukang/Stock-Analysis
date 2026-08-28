@@ -717,6 +717,7 @@ function applyCategory(value) {
   cryptoView.style.display = value === "crypto" ? "" : "none";
   placeholderView.classList.remove("show");
   watchlistsView.classList.remove("show");
+  applyMarketBannerVisibility();
 
   if (value === "focus") {
     return;
@@ -957,29 +958,47 @@ function addKdjAlert(alert) {
   renderKdjAlerts();
 }
 
-// Polls whether Alpaca is currently reachable (the 6am-6pm ET market data
-// window — see config.py / data/stream.py). Outside it the backend makes no
-// Alpaca calls at all; this just shows that state clearly rather than
-// leaving the chart looking silently stuck.
+// Polls whether Alpaca's *stock* data path is currently reachable (the
+// 6am-6pm ET market data window — see config.py / data/stream.py). Outside
+// it the backend makes no stock Alpaca calls at all; this just shows that
+// state clearly rather than leaving the stock chart looking silently
+// stuck. Crypto is a separate Alpaca data path that trades 24/7 (see
+// data/crypto_stream.py) and is never affected by this window, so the
+// "market closed" banner below is deliberately only shown while the Focus
+// Stock Analysis category is the active one — see applyMarketBannerVisibility.
 // Tracks the last known market-open state so the 30s fallback poll below can
-// skip re-fetching the chart while the market is closed — otherwise the
-// screen visibly "refreshes" every 30s for no reason, since there's no new
-// data (and no Alpaca calls happening) while closed anyway.
+// skip re-fetching the stock chart while the market is closed — otherwise
+// the screen visibly "refreshes" every 30s for no reason, since there's no
+// new data (and no Alpaca calls happening) while closed anyway.
 let marketOpen = true; // optimistic default until the first status check lands
+
+// Shows the "market closed" banner (and hides the live/disconnected dot in
+// its place) only when it's actually relevant: the stock market is closed
+// AND the user is looking at the stock page. Crypto (and every other
+// category — the screeners/watchlists/KDJ history views are all already
+// independent of the stock market data window too) always shows the
+// normal WebSocket live/disconnected status instead. Called both after a
+// fresh /api/status poll and immediately on category switch, so switching
+// to the crypto page while the stock market happens to be closed clears
+// the banner right away instead of waiting for the next 30s poll.
+function applyMarketBannerVisibility() {
+  const showClosedBanner = !marketOpen && categorySelect.value === "focus";
+  if (showClosedBanner) {
+    marketClosedBanner.classList.add("show");
+    wsStatusSpan.style.display = "none"; // replace the live/disconnected dot with the banner
+  } else {
+    marketClosedBanner.classList.remove("show");
+    wsStatusSpan.style.display = "";
+  }
+}
 
 async function refreshMarketStatus() {
   try {
     const res = await fetch("/api/status");
     const body = await res.json();
     marketOpen = body.market_open !== false;
-    if (!marketOpen) {
-      marketReopenTimeSpan.textContent = body.market_data_start_et || "";
-      marketClosedBanner.classList.add("show");
-      wsStatusSpan.style.display = "none"; // replace the live/disconnected dot with the banner
-    } else {
-      marketClosedBanner.classList.remove("show");
-      wsStatusSpan.style.display = "";
-    }
+    marketReopenTimeSpan.textContent = body.market_data_start_et || "";
+    applyMarketBannerVisibility();
   } catch (e) {
     // Transient fetch failure — leave things in whatever state they were.
   }
