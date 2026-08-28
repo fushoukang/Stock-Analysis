@@ -700,7 +700,7 @@ async def get_chart(
 
 @app.get("/api/crypto-chart")
 async def get_crypto_chart(
-    symbol: str, timeframe: str = "15Min", indicators: str = "", limit: int = 300
+    symbol: str, timeframe: str = "30Min", indicators: str = "", limit: int = 300
 ):
     """Crypto counterpart to /api/chart — same Plotly-figure-as-JSON shape,
     same indicator math and composite signal (both are asset-agnostic, they
@@ -792,7 +792,7 @@ async def api_backtest(
 
 @app.get("/api/crypto-backtest")
 async def api_crypto_backtest(
-    symbol: str, timeframe: str = "15Min", indicators: str = "", limit: int = 500
+    symbol: str, timeframe: str = "30Min", indicators: str = "", limit: int = 500
 ) -> JSONResponse:
     """Crypto counterpart to /api/backtest — same run_backtest() engine,
     sourced from crypto bars instead of stock bars."""

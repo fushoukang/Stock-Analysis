@@ -831,7 +831,7 @@ async function loadCryptoOptions() {
   cryptoSymbolInput.value = cryptoSymbols[0] || "BTC/USDT";
 
   cryptoTimeframeSel.innerHTML = tfRes.timeframes.map(t => `<option value="${t}">${t}</option>`).join("");
-  cryptoTimeframeSel.value = "15Min";
+  cryptoTimeframeSel.value = "30Min";
 
   cryptoIndicatorsDiv.innerHTML = AVAILABLE_INDICATORS.map(ind => `
     <label><input type="checkbox" value="${ind.id}"> ${ind.label}</label>
@@ -850,7 +850,7 @@ async function loadCryptoChart() {
   if (cryptoChartLoadInFlight) return;
   cryptoChartLoadInFlight = true;
   try {
-    const timeframe = cryptoTimeframeSel.value || "15Min";
+    const timeframe = cryptoTimeframeSel.value || "30Min";
     const indicators = selectedCryptoIndicators().join(",");
     cryptoMsgDiv.textContent = "Loading…";
     const res = await fetch(`/api/crypto-chart?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&indicators=${encodeURIComponent(indicators)}`);
@@ -900,7 +900,7 @@ async function runCryptoBacktest() {
   cryptoBacktestSummary.innerHTML = "";
   cryptoBacktestTradesTbody.innerHTML = "";
   try {
-    const timeframe = cryptoTimeframeSel.value || "15Min";
+    const timeframe = cryptoTimeframeSel.value || "30Min";
     const res = await fetch(`/api/crypto-backtest?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`);
     const data = await res.json();
     if (!res.ok || data.error) {
