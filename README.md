@@ -1,7 +1,8 @@
 # Stock Trading Analysis
 
-Real-time stock data streaming and technical analysis on top of Alpaca's
-Trading/Market Data API, with a web GUI for candlestick charts and indicators.
+Real-time stock and crypto data streaming and technical analysis on top of
+Alpaca's Trading/Market Data API, with a web GUI for candlestick charts and
+indicators.
 
 This app is **read-only market data analysis** — it streams and stores bars
 and computes indicators, but never places, modifies, or cancels orders.
@@ -47,6 +48,21 @@ and computes indicators, but never places, modifies, or cancels orders.
   title's price updates continuously from individual trade ticks (not just
   once per minute bar close) — a lightweight in-place title update, not a
   full chart re-render
+- **Focus Crypto Analysis** page: the same candlestick charts, indicators,
+  trend signals, and backtesting as the stock page, for crypto pairs (e.g.
+  BTC/USDT, ETH/USDT) via Alpaca's separate crypto exchange/data path
+  (`data/crypto_historical.py`, `data/crypto_stream.py`,
+  `alpaca.data.live.crypto.CryptoDataStream`) — same account credentials,
+  no separate signup. Default pairs come from `CRYPTO_WATCHLIST` in `.env`;
+  any other pair can be typed directly (BASE/QUOTE format). Unlike stocks,
+  crypto trades 24/7, so there's no market-hours gating — the backfill and
+  live stream just run continuously. One deliberate scope difference from
+  the stock page: the chart reloads in full on each new bar (roughly once
+  per interval) rather than also smoothing the title price between
+  individual trade ticks, and there's no KDJ alert monitor for crypto pairs
+  yet. The chart title links out to the pair's Binance trade page
+  (`data/crypto_info.py`) instead of a CNBC quote page, and shows a small
+  static friendly name (e.g. "Bitcoin") for common base assets
 - KDJ cross monitor: watches the symbols in `monitor_list.txt`, recomputes a
   rolling 15-minute KDJ every 2 minutes (`KDJ_CHECK_INTERVAL_SEC`) from the
   live 1-min stream, and emails an alert if K and D crossed within the last
@@ -70,9 +86,10 @@ and computes indicators, but never places, modifies, or cancels orders.
   and `MARKET_DATA_END_ET` (default 6:30 AM - 6:00 PM ET, Mon-Fri — early +
   regular + post market hours). Outside that window the app makes zero
   Alpaca API calls and the GUI shows a "The market has closed" banner
-- Category dropdown (top-right of the header): "Focus Stock Analysis" is the
-  main chart view above; the other three are market screeners, independent of
-  Alpaca and not gated by the market data window:
+- Category dropdown (top-right of the header): "Focus Stock Analysis" and
+  "Focus Crypto Analysis" are the two chart views described above; the rest
+  are market screeners/tools, independent of Alpaca's stock data path and
+  not gated by the market data window:
   - **52 Week High / 52 Week Low Stocks** — scraped from TradingView's market
     movers pages (`screeners/tradingview.py`), filtered to market cap > $1B
     (high) / > $100M (low), each symbol linking to its CNBC.com quote page.
@@ -116,7 +133,10 @@ and computes indicators, but never places, modifies, or cancels orders.
    live account's keys; the app itself never trades regardless of this
    setting — it only affects which key pair is expected.
 
-3. Adjust `WATCHLIST` in `.env` to the symbols you want to track.
+3. Adjust `WATCHLIST` in `.env` to the symbols you want to track, and
+   `CRYPTO_WATCHLIST` to the crypto pairs (BASE/QUOTE format, e.g.
+   `BTC/USDT,ETH/USDT`) for the Focus Crypto Analysis page — same Alpaca
+   account credentials, no separate signup needed.
 
    `MARKET_DATA_START_ET`/`MARKET_DATA_END_ET` control the window during
    which the app talks to Alpaca at all (default 06:30-18:00 ET). Adjust
@@ -155,8 +175,11 @@ begins pushing updates to any open browser tabs.
 config.py              settings loaded from .env
 data/
   store.py             SQLite OHLCV storage
-  historical.py         Alpaca historical bar fetch
-  stream.py             Alpaca live WebSocket stream -> store + broadcast queue
+  historical.py         Alpaca historical bar fetch (stocks)
+  stream.py             Alpaca live WebSocket stream (stocks) -> store + broadcast queue
+  crypto_historical.py  Alpaca historical bar fetch (crypto)
+  crypto_stream.py       Alpaca live WebSocket stream (crypto) -> store + broadcast queue
+  crypto_info.py          crypto display-name lookup + Binance quote link
 indicators/
   moving_average.py     SMA, EMA, MA
   bollinger.py           Bollinger Bands
@@ -193,7 +216,9 @@ composite signal's per-rule correctness and fault-isolation guarantee
 signals already computed for the others), KDJ cross detection and
 monitor-list read/write, the halts screener's direction logic, watchlists
 CRUD round-trips, the rule-based market holiday calendar, `BarStore`
-(bar upsert/prune, KDJ alert record/backfill), and the backtesting engine.
+(bar upsert/prune, KDJ alert record/backfill), the backtesting engine, and
+the crypto display-name/Binance-link helpers plus the chart title's
+quote_url override.
 Doesn't cover the FastAPI endpoints themselves end-to-end or the frontend
 JS — those are verified manually (`TestClient` + `node --check` during
 development) rather than as part of this pytest suite.
@@ -208,6 +233,10 @@ development) rather than as part of this pytest suite.
   Add auth before exposing it beyond localhost.
 - IEX (free) data feed is the default; switch `ALPACA_DATA_FEED=sip` in
   `.env` if you have a SIP subscription for full-market data.
+- The Focus Crypto Analysis page doesn't have a KDJ cross monitor/alert
+  history yet (that's still stock-only, driven by `monitor_list.txt`) — a
+  natural follow-up would be a `crypto_monitor_list.txt` equivalent reusing
+  `alerts/kdj_monitor.py`'s cross-detection logic against crypto bars.
 - The market data window (`MARKET_DATA_START_ET`/`MARKET_DATA_END_ET`) now
   also checks a rule-based NYSE/Nasdaq holiday calendar (`market_holidays.py`
   — New Year's, MLK Day, Presidents Day, Good Friday, Memorial Day,

@@ -52,8 +52,8 @@
   .kdj-alert-chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 12px; white-space: nowrap; }
   .kdj-alert-chip.up { background: #dcfce7; color: #15803d; }
   .kdj-alert-chip.down { background: #fee2e2; color: #b91c1c; }
-  #chart { width: 100%; height: 78vh; background: white; padding-right: 40px; box-sizing: border-box; }
-  #msg { padding: 8px 20px; font-size: 13px; color: #b45309; }
+  #chart, #crypto-chart { width: 100%; height: 78vh; background: white; padding-right: 40px; box-sizing: border-box; }
+  #msg, #crypto-msg { padding: 8px 20px; font-size: 13px; color: #b45309; }
   /* Category dropdown pinned to the right of the title bar. */
   #category-select { margin-left: auto; background: #1f2937; color: white; border: 1px solid #374151; border-radius: 4px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
   #placeholder-view { display: none; padding: 20px; }
@@ -74,20 +74,20 @@
   /* Backtest results panel: a dismissible card below the chart, shown on
      demand when "Run Backtest" is clicked — see backtesting.py for what it
      simulates (a long/flat strategy driven by the composite signal). */
-  #backtest-panel { margin: 0 20px 20px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px 20px; }
-  #backtest-panel[hidden] { display: none; }
-  #backtest-header { display: flex; align-items: center; justify-content: space-between; }
-  #backtest-header h3 { margin: 0; font-size: 15px; color: #111827; }
-  #backtest-close-btn { border: none; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: #9ca3af; padding: 0 4px; }
-  #backtest-close-btn:hover { color: #374151; }
-  #backtest-msg { font-size: 13px; color: #b45309; margin-top: 8px; }
-  #backtest-summary { display: flex; flex-wrap: wrap; gap: 20px; margin: 14px 0; }
+  #backtest-panel, #crypto-backtest-panel { margin: 0 20px 20px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px 20px; }
+  #backtest-panel[hidden], #crypto-backtest-panel[hidden] { display: none; }
+  #backtest-header, #crypto-backtest-header { display: flex; align-items: center; justify-content: space-between; }
+  #backtest-header h3, #crypto-backtest-header h3 { margin: 0; font-size: 15px; color: #111827; }
+  #backtest-close-btn, #crypto-backtest-close-btn { border: none; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: #9ca3af; padding: 0 4px; }
+  #backtest-close-btn:hover, #crypto-backtest-close-btn:hover { color: #374151; }
+  #backtest-msg, #crypto-backtest-msg { font-size: 13px; color: #b45309; margin-top: 8px; }
+  #backtest-summary, #crypto-backtest-summary { display: flex; flex-wrap: wrap; gap: 20px; margin: 14px 0; }
   .backtest-stat { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
   .backtest-stat-label { font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.03em; }
-  #backtest-trades-wrap { overflow-x: auto; max-height: 300px; overflow-y: auto; }
-  #backtest-trades-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  #backtest-trades-table th { text-align: left; padding: 6px 10px; background: #f3f4f6; color: #374151; border-bottom: 1px solid #e5e7eb; white-space: nowrap; position: sticky; top: 0; }
-  #backtest-trades-table td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+  #backtest-trades-wrap, #crypto-backtest-trades-wrap { overflow-x: auto; max-height: 300px; overflow-y: auto; }
+  #backtest-trades-table, #crypto-backtest-trades-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #backtest-trades-table th, #crypto-backtest-trades-table th { text-align: left; padding: 6px 10px; background: #f3f4f6; color: #374151; border-bottom: 1px solid #e5e7eb; white-space: nowrap; position: sticky; top: 0; }
+  #backtest-trades-table td, #crypto-backtest-trades-table td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
   .halt-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
   .halt-badge.active { background: #fee2e2; color: #b91c1c; }
   .halt-badge.resumed { background: #dcfce7; color: #15803d; }
@@ -132,6 +132,7 @@
   <span id="market-closed-banner">The market has closed. Live data resumes at <span id="market-reopen-time"></span> ET.</span>
   <select id="category-select">
     <option value="focus" selected>Focus Stock Analysis</option>
+    <option value="crypto">Focus Crypto Analysis</option>
     <option value="52w-high">52 Week High Stocks</option>
     <option value="52w-low">52 Week Low Stocks</option>
     <option value="halts">Current Market Halt Stocks</option>
@@ -179,6 +180,46 @@
       <table id="backtest-trades-table">
         <thead><tr><th>Entry Time</th><th>Entry $</th><th>Exit Time</th><th>Exit $</th><th>Return %</th></tr></thead>
         <tbody id="backtest-trades-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="crypto-view" style="display:none">
+  <div class="controls">
+    <div>
+      <label for="crypto-symbol">Symbol</label>
+      <span class="symbol-combo">
+        <input type="text" id="crypto-symbol" placeholder="e.g. BTC/USDT" autocomplete="off">
+        <button id="crypto-symbol-dropdown-btn" type="button" title="Pairs from CRYPTO_WATCHLIST">&#9662;</button>
+        <div id="crypto-symbol-dropdown" class="symbol-dropdown-list" hidden></div>
+      </span>
+      <button id="crypto-load-btn" type="button">Load</button>
+    </div>
+    <div>
+      <label for="crypto-timeframe">Interval</label>
+      <select id="crypto-timeframe"></select>
+    </div>
+    <div class="indicator-group" id="crypto-indicators"></div>
+    <div>
+      <button id="crypto-backtest-btn" type="button" title="Simulate a long/flat strategy driven by the composite signal (EMA+RSI+MACD by default) over this pair's recent history. Not investment advice.">Run Backtest</button>
+    </div>
+  </div>
+
+  <div id="crypto-msg"></div>
+  <div id="crypto-chart"></div>
+
+  <div id="crypto-backtest-panel" hidden>
+    <div id="crypto-backtest-header">
+      <h3>Backtest Results</h3>
+      <button id="crypto-backtest-close-btn" type="button" title="Close">&times;</button>
+    </div>
+    <div id="crypto-backtest-msg"></div>
+    <div id="crypto-backtest-summary"></div>
+    <div id="crypto-backtest-trades-wrap">
+      <table id="crypto-backtest-trades-table">
+        <thead><tr><th>Entry Time</th><th>Entry $</th><th>Exit Time</th><th>Exit $</th><th>Return %</th></tr></thead>
+        <tbody id="crypto-backtest-trades-tbody"></tbody>
       </table>
     </div>
   </div>
@@ -281,6 +322,20 @@ const marketClosedBanner = document.getElementById("market-closed-banner");
 const marketReopenTimeSpan = document.getElementById("market-reopen-time");
 const categorySelect = document.getElementById("category-select");
 const focusView = document.getElementById("focus-view");
+const cryptoView = document.getElementById("crypto-view");
+const cryptoSymbolInput = document.getElementById("crypto-symbol");
+const cryptoSymbolDropdownBtn = document.getElementById("crypto-symbol-dropdown-btn");
+const cryptoSymbolDropdown = document.getElementById("crypto-symbol-dropdown");
+const cryptoLoadBtn = document.getElementById("crypto-load-btn");
+const cryptoTimeframeSel = document.getElementById("crypto-timeframe");
+const cryptoIndicatorsDiv = document.getElementById("crypto-indicators");
+const cryptoMsgDiv = document.getElementById("crypto-msg");
+const cryptoBacktestBtn = document.getElementById("crypto-backtest-btn");
+const cryptoBacktestPanel = document.getElementById("crypto-backtest-panel");
+const cryptoBacktestCloseBtn = document.getElementById("crypto-backtest-close-btn");
+const cryptoBacktestMsg = document.getElementById("crypto-backtest-msg");
+const cryptoBacktestSummary = document.getElementById("crypto-backtest-summary");
+const cryptoBacktestTradesTbody = document.getElementById("crypto-backtest-trades-tbody");
 const placeholderView = document.getElementById("placeholder-view");
 const placeholderTitle = document.getElementById("placeholder-title");
 const placeholderSubtitle = document.getElementById("placeholder-subtitle");
@@ -659,10 +714,15 @@ async function loadScreener(value) {
 
 function applyCategory(value) {
   focusView.style.display = value === "focus" ? "" : "none";
+  cryptoView.style.display = value === "crypto" ? "" : "none";
   placeholderView.classList.remove("show");
   watchlistsView.classList.remove("show");
 
   if (value === "focus") {
+    return;
+  }
+  if (value === "crypto") {
+    loadCryptoOptions().then(loadCryptoChart);
     return;
   }
   if (value === "watchlists") {
@@ -722,6 +782,159 @@ async function loadOptions() {
     <label><input type="checkbox" value="${ind.id}"> ${ind.label}</label>
   `).join("");
 }
+
+// --- Focus Crypto Analysis ---
+// A separate, simpler page: same indicator checkboxes and Run Backtest
+// panel as the stock page, driven by /api/crypto-chart and
+// /api/crypto-backtest instead. Deliberately skips the stock page's
+// in-place live-tick title-price update (buildPriceTitle/updateTitlePrice)
+// — a "bars" WebSocket message (see connectWebSocket below) still triggers
+// a full chart reload roughly once per crypto bar close, which is plenty
+// for monitoring; per-trade-tick title smoothing wasn't worth doubling
+// that bit of state-tracking machinery for a second page.
+function currentCryptoSymbol() {
+  return cryptoSymbolInput.value.trim().toUpperCase();
+}
+
+function selectedCryptoIndicators() {
+  return Array.from(cryptoIndicatorsDiv.querySelectorAll("input:checked")).map(cb => cb.value);
+}
+
+let cryptoSymbols = [];
+
+function renderCryptoSymbolDropdown() {
+  cryptoSymbolDropdown.innerHTML = cryptoSymbols.length
+    ? cryptoSymbols.map(s => `<div class="symbol-option" data-symbol="${s}">${s}</div>`).join("")
+    : `<div class="symbol-empty">No pairs in CRYPTO_WATCHLIST</div>`;
+}
+
+function openCryptoSymbolDropdown() {
+  renderCryptoSymbolDropdown();
+  cryptoSymbolDropdown.hidden = false;
+}
+
+function closeCryptoSymbolDropdown() {
+  cryptoSymbolDropdown.hidden = true;
+}
+
+let cryptoOptionsLoaded = false;
+
+async function loadCryptoOptions() {
+  if (cryptoOptionsLoaded) return; // symbols/timeframes/indicators only need loading once
+  const [symRes, tfRes] = await Promise.all([
+    fetch("/api/crypto-symbols").then(r => r.json()),
+    fetch("/api/timeframes").then(r => r.json()),
+  ]);
+  cryptoSymbols = symRes.symbols || [];
+  renderCryptoSymbolDropdown();
+  cryptoSymbolInput.value = cryptoSymbols[0] || "BTC/USDT";
+
+  cryptoTimeframeSel.innerHTML = tfRes.timeframes.map(t => `<option value="${t}">${t}</option>`).join("");
+  cryptoTimeframeSel.value = "15Min";
+
+  cryptoIndicatorsDiv.innerHTML = AVAILABLE_INDICATORS.map(ind => `
+    <label><input type="checkbox" value="${ind.id}"> ${ind.label}</label>
+  `).join("");
+  cryptoOptionsLoaded = true;
+}
+
+let cryptoChartLoadInFlight = false;
+
+async function loadCryptoChart() {
+  const symbol = currentCryptoSymbol();
+  if (!symbol) {
+    cryptoMsgDiv.textContent = "Enter a pair, e.g. BTC/USDT.";
+    return;
+  }
+  if (cryptoChartLoadInFlight) return;
+  cryptoChartLoadInFlight = true;
+  try {
+    const timeframe = cryptoTimeframeSel.value || "15Min";
+    const indicators = selectedCryptoIndicators().join(",");
+    cryptoMsgDiv.textContent = "Loading…";
+    const res = await fetch(`/api/crypto-chart?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&indicators=${encodeURIComponent(indicators)}`);
+    const body = await res.json();
+    if (body.error) {
+      cryptoMsgDiv.textContent = body.error;
+      Plotly.purge("crypto-chart");
+      return;
+    }
+    cryptoMsgDiv.textContent = "";
+    const fig = JSON.parse(body.figure);
+    Plotly.react("crypto-chart", fig.data, fig.layout, {responsive: true});
+  } finally {
+    cryptoChartLoadInFlight = false;
+  }
+}
+
+function renderCryptoBacktestResult(data) {
+  const returnClass = data.total_return_pct > 0 ? "chg-up" : data.total_return_pct < 0 ? "chg-down" : "";
+  const winRateText = data.win_rate_pct != null ? `${data.win_rate_pct.toFixed(1)}%` : "—";
+  cryptoBacktestSummary.innerHTML = `
+    <div class="backtest-stat"><span class="backtest-stat-label">Symbol / Interval</span><span>${escapeHtml(data.symbol)} · ${escapeHtml(data.timeframe)}</span></div>
+    <div class="backtest-stat"><span class="backtest-stat-label">Window</span><span>${formatBacktestTs(data.start_time)} → ${formatBacktestTs(data.end_time)} (${data.bars_used} bars)</span></div>
+    <div class="backtest-stat"><span class="backtest-stat-label">Indicators</span><span>SMA + ${data.indicators.map(escapeHtml).join(", ")}</span></div>
+    <div class="backtest-stat"><span class="backtest-stat-label">Total Return</span><span class="${returnClass}">${data.total_return_pct > 0 ? "+" : ""}${data.total_return_pct.toFixed(2)}%</span></div>
+    <div class="backtest-stat"><span class="backtest-stat-label">Final Equity</span><span>$${data.final_equity.toFixed(2)} (from $${data.initial_capital.toFixed(2)})</span></div>
+    <div class="backtest-stat"><span class="backtest-stat-label">Trades / Win Rate</span><span>${data.num_trades} trades, ${winRateText} win rate</span></div>
+  `;
+  cryptoBacktestTradesTbody.innerHTML = data.trades.map((t) => {
+    const cls = t.return_pct > 0 ? "chg-up" : t.return_pct < 0 ? "chg-down" : "";
+    const forcedNote = t.forced ? ' <span title="Position was still open at the end of the window — closed out here just to compute a final result." style="color:#9ca3af">(forced)</span>' : "";
+    return `<tr>
+      <td>${formatBacktestTs(t.entry_time)}</td>
+      <td>$${t.entry_price.toFixed(2)}</td>
+      <td>${formatBacktestTs(t.exit_time)}${forcedNote}</td>
+      <td>$${t.exit_price.toFixed(2)}</td>
+      <td class="${cls}">${t.return_pct > 0 ? "+" : ""}${t.return_pct.toFixed(2)}%</td>
+    </tr>`;
+  }).join("");
+}
+
+async function runCryptoBacktest() {
+  const symbol = currentCryptoSymbol();
+  if (!symbol) return;
+  cryptoBacktestPanel.hidden = false;
+  cryptoBacktestMsg.textContent = "Running backtest…";
+  cryptoBacktestSummary.innerHTML = "";
+  cryptoBacktestTradesTbody.innerHTML = "";
+  try {
+    const timeframe = cryptoTimeframeSel.value || "15Min";
+    const res = await fetch(`/api/crypto-backtest?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`);
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      cryptoBacktestMsg.textContent = data.error || `Backtest failed (HTTP ${res.status})`;
+      return;
+    }
+    cryptoBacktestMsg.textContent = "";
+    renderCryptoBacktestResult(data);
+  } catch (err) {
+    cryptoBacktestMsg.textContent = `Backtest failed: ${err}`;
+  }
+}
+
+cryptoBacktestBtn.addEventListener("click", runCryptoBacktest);
+cryptoBacktestCloseBtn.addEventListener("click", () => { cryptoBacktestPanel.hidden = true; });
+
+cryptoLoadBtn.addEventListener("click", loadCryptoChart);
+cryptoSymbolInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { closeCryptoSymbolDropdown(); loadCryptoChart(); } });
+cryptoSymbolInput.addEventListener("focus", openCryptoSymbolDropdown);
+cryptoTimeframeSel.addEventListener("change", loadCryptoChart);
+cryptoIndicatorsDiv.addEventListener("change", loadCryptoChart);
+
+cryptoSymbolDropdownBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (cryptoSymbolDropdown.hidden) openCryptoSymbolDropdown();
+  else closeCryptoSymbolDropdown();
+});
+
+cryptoSymbolDropdown.addEventListener("click", (e) => {
+  const opt = e.target.closest(".symbol-option");
+  if (!opt) return;
+  cryptoSymbolInput.value = opt.dataset.symbol;
+  closeCryptoSymbolDropdown();
+  loadCryptoChart();
+});
 
 // Recent KDJ cross alerts, shown on screen as chips to the right of the
 // indicator checkboxes (mirrors the email alerts sent by the KDJ monitor).
@@ -936,6 +1149,11 @@ function connectWebSocket() {
     if (msg.type !== "bars") return;
     const relevant = msg.data.some(b => b.symbol === currentSymbol());
     if (relevant) loadChart();
+    // Stock tickers never contain "/" and crypto pairs always do (e.g.
+    // "BTC/USDT"), so a "bars" message can only ever match one of these
+    // two symbol getters — safe to check both without double-firing.
+    const cryptoRelevant = msg.data.some(b => b.symbol === currentCryptoSymbol());
+    if (cryptoRelevant) loadCryptoChart();
   };
 }
 
@@ -1077,6 +1295,7 @@ editListTextarea.addEventListener("keydown", (e) => {
 
 document.addEventListener("click", (e) => {
   if (!symbolDropdown.hidden && !e.target.closest(".symbol-combo")) closeSymbolDropdown();
+  if (!cryptoSymbolDropdown.hidden && !e.target.closest(".symbol-combo")) closeCryptoSymbolDropdown();
 });
 
 (async () => {
@@ -1095,6 +1314,11 @@ document.addEventListener("click", (e) => {
   // This one always runs — it's how the app notices the market has reopened
   // and resumes the chart poll above.
   setInterval(refreshMarketStatus, 30000);
+  // Same fallback idea for the crypto chart, but unconditional — crypto
+  // trades 24/7, so there's no "market closed" state to skip around. Only
+  // fires while the Focus Crypto Analysis category is actually selected,
+  // so switching away doesn't keep polling a chart nobody's looking at.
+  setInterval(() => { if (categorySelect.value === "crypto") loadCryptoChart(); }, 30000);
 })();
 </script>
 </body>

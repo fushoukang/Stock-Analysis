@@ -115,6 +115,7 @@ def build_candlestick_figure(
     company_name: str | None = None,
     signals: dict | None = None,
     composite: dict | None = None,
+    quote_url: str | None = None,
 ) -> go.Figure:
     """
     df: OHLCV DataFrame indexed by timestamp.
@@ -136,6 +137,12 @@ def build_candlestick_figure(
         from indicators/signals.py's compute_composite_signal() — the
         majority-vote rollup across `signals`, appended to the price
         chart's title right after SMA's own reading.
+    quote_url: optional override for the title's outbound quote link,
+        e.g. a Binance trade-page URL for a crypto pair (see
+        data/crypto_info.py's binance_quote_url()). Defaults to CNBC's
+        stock quote page (cnbc_quote_url(symbol)) when not given, which is
+        the right link for a stock ticker but not for a crypto pair like
+        "BTC/USDT".
     """
     # SMA is always shown merged into the price chart, so it never takes its
     # own box — drop it here if present so it doesn't double up below.
@@ -184,7 +191,7 @@ def build_candlestick_figure(
     # link with no custom click handling needed on the frontend. Falls back
     # to making the symbol the link if no company name was found, so there's
     # still something clickable in the title either way.
-    cnbc_url = cnbc_quote_url(symbol)
+    cnbc_url = quote_url if quote_url is not None else cnbc_quote_url(symbol)
     cnbc_link = f'<a href="{cnbc_url}" target="_blank">{company_name}</a>' if company_name else None
     if cnbc_link:
         name_suffix = f" — {cnbc_link}"

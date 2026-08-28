@@ -21,6 +21,9 @@ from config import settings, is_within_market_data_window
 from data.store import BarStore
 from data.historical import fetch_bars, fetch_latest_prices, fetch_previous_closes, TIMEFRAME_MAP
 from data.stream import LiveStreamManager, RAW_TIMEFRAME
+from data.crypto_historical import fetch_crypto_bars
+from data.crypto_stream import CryptoLiveStreamManager
+from data.crypto_info import crypto_display_name, binance_quote_url
 from data.resample import resample_bars, BAR_MINUTES
 from charts.candlestick import build_candlestick_figure
 from indicators.signals import compute_signals, compute_composite_signal
@@ -54,6 +57,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 store = BarStore(settings.db_full_path())
 stream_manager: LiveStreamManager | None = None
+crypto_stream_manager: CryptoLiveStreamManager | None = None
 _ws_clients: set[WebSocket] = set()
 
 # Tracks the market data window's open/closed state across polls, so
@@ -73,6 +77,19 @@ async def _backfill_all_symbols(symbols: list[str]) -> None:
                 store.upsert_bars_df(symbol, RAW_TIMEFRAME, df)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Historical backfill failed for %s: %s", symbol, exc)
+
+
+async def _backfill_all_crypto_symbols(symbols: list[str]) -> None:
+    """REST-fetch recent history for each crypto pair and seed the local
+    store — unlike _backfill_all_symbols, not gated by
+    is_within_market_data_window() at all, since crypto trades 24/7."""
+    for symbol in symbols:
+        try:
+            df = fetch_crypto_bars(symbol, timeframe="1Min", lookback_days=5)
+            if not df.empty:
+                store.upsert_bars_df(symbol, RAW_TIMEFRAME, df)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Historical crypto backfill failed for %s: %s", symbol, exc)
 
 
 _BAR_PRUNE_INTERVAL_SEC = 6 * 60 * 60  # every 6 hours
@@ -139,7 +156,7 @@ async def _market_hours_loop(all_symbols: list[str]) -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    global stream_manager, _market_window_open
+    global stream_manager, crypto_stream_manager, _market_window_open
 
     # Local DB maintenance, independent of Alpaca credentials — runs
     # regardless of whether the rest of startup bails out below.
@@ -193,11 +210,25 @@ async def on_startup() -> None:
             ", ".join(monitor_symbols),
         )
 
+    # --- Crypto ("Focus Crypto Analysis" page) ---
+    # Same account credentials as stocks — Alpaca just runs a separate
+    # crypto exchange/data path. Unlike the stock backfill/stream above,
+    # deliberately NOT gated by the market data window: crypto trades 24/7,
+    # so there's no "closed" state to wait out here.
+    crypto_symbols = settings.crypto_watchlist
+    if crypto_symbols:
+        await _backfill_all_crypto_symbols(crypto_symbols)
+        crypto_stream_manager = CryptoLiveStreamManager(store, crypto_symbols)
+        crypto_stream_manager.start()
+        logger.info("Crypto live stream started for: %s", ", ".join(crypto_symbols))
+
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     if stream_manager is not None:
         stream_manager.stop()
+    if crypto_stream_manager is not None:
+        crypto_stream_manager.stop()
 
 
 async def _broadcast(payload: dict) -> None:
@@ -214,31 +245,54 @@ async def _broadcast(payload: dict) -> None:
 
 
 async def _broadcast_loop() -> None:
-    """Poll the stream manager's update queues and fan out to WebSocket
+    """Poll the stream managers' update queues and fan out to WebSocket
     clients: heavier "bars" updates (drive a full chart redraw, roughly once
     a minute per symbol) and lightweight "price" updates (drive an in-place
     title update only — see index.html — from individual trade ticks, so the
-    displayed price stays continuously current between bar closes)."""
+    displayed price stays continuously current between bar closes).
+
+    Drains both the stock stream_manager and the crypto_stream_manager into
+    the same broadcast messages — stock tickers never contain "/" and
+    crypto pairs always do (e.g. "BTC/USDT"), so the two symbol spaces
+    never collide and the frontend's existing symbol-matching logic (see
+    index.html) works unchanged for either asset class without needing a
+    separate message type."""
     while True:
         await asyncio.sleep(1.0)
-        if stream_manager is None:
-            continue
 
-        updates = stream_manager.drain_updates()
-        if updates:
-            await _broadcast({"type": "bars", "data": [u.to_dict() for u in updates]})
+        if stream_manager is not None:
+            updates = stream_manager.drain_updates()
+            if updates:
+                await _broadcast({"type": "bars", "data": [u.to_dict() for u in updates]})
 
-        price_updates = stream_manager.drain_price_updates()
-        if price_updates:
-            await _broadcast(
-                {
-                    "type": "price",
-                    "data": [
-                        {"symbol": sym, "price": price, "ts": ts}
-                        for sym, (price, ts) in price_updates.items()
-                    ],
-                }
-            )
+            price_updates = stream_manager.drain_price_updates()
+            if price_updates:
+                await _broadcast(
+                    {
+                        "type": "price",
+                        "data": [
+                            {"symbol": sym, "price": price, "ts": ts}
+                            for sym, (price, ts) in price_updates.items()
+                        ],
+                    }
+                )
+
+        if crypto_stream_manager is not None:
+            crypto_updates = crypto_stream_manager.drain_updates()
+            if crypto_updates:
+                await _broadcast({"type": "bars", "data": [u.to_dict() for u in crypto_updates]})
+
+            crypto_price_updates = crypto_stream_manager.drain_price_updates()
+            if crypto_price_updates:
+                await _broadcast(
+                    {
+                        "type": "price",
+                        "data": [
+                            {"symbol": sym, "price": price, "ts": ts}
+                            for sym, (price, ts) in crypto_price_updates.items()
+                        ],
+                    }
+                )
 
 
 async def _broadcast_kdj_alert(alert: dict) -> None:
@@ -266,6 +320,9 @@ async def status() -> JSONResponse:
             "market_data_end_et": settings.market_data_end_et.strftime("%H:%M"),
             "kdj_monitor_symbols": load_monitor_symbols(),
             "kdj_monitor_email_configured": settings.has_smtp_credentials(),
+            "crypto_streaming": crypto_stream_manager is not None,
+            "crypto_stream_connected": crypto_stream_manager.is_connected() if crypto_stream_manager is not None else False,
+            "crypto_watchlist": settings.crypto_watchlist,
         }
     )
 
@@ -277,6 +334,15 @@ async def get_symbols() -> JSONResponse:
     # file takes effect without restarting the app. The Symbol field stays a
     # free-text box too, so any other ticker can still be typed directly.
     return JSONResponse({"symbols": load_monitor_symbols()})
+
+
+@app.get("/api/crypto-symbols")
+async def get_crypto_symbols() -> JSONResponse:
+    # Dropdown suggestions for the Focus Crypto Analysis page's Symbol box —
+    # CRYPTO_WATCHLIST from .env. Like the stock Symbol field, this stays a
+    # free-text box too, so any other pair (e.g. "SOL/USDT") can be typed
+    # directly even if it's not in the configured list.
+    return JSONResponse({"symbols": settings.crypto_watchlist})
 
 
 @app.post("/api/monitor-list")
@@ -422,6 +488,48 @@ def _load_symbol_df(symbol: str, timeframe: str, limit: int):
 
     lookback_days = 5 if timeframe != "1Day" else max(60, limit * 2)
     return fetch_bars(symbol, timeframe=timeframe, lookback_days=lookback_days, limit=limit)
+
+
+def _load_crypto_symbol_df(symbol: str, timeframe: str, limit: int):
+    """Same job as _load_symbol_df, for a crypto pair (e.g. 'BTC/USDT')
+    instead of a stock ticker. Simpler than the stock version in one way:
+    crypto trades 24/7, so there's no market-data-window to check before
+    doing a staleness catch-up fetch — if the local data looks stale and
+    credentials are configured, always try to top it up."""
+    if timeframe != "1Day":
+        bar_minutes = BAR_MINUTES.get(timeframe, 1)
+        raw_limit = min(max(limit * bar_minutes, 60 * 24 * 7), 50_000)
+        raw = store.get_bars(symbol, RAW_TIMEFRAME, limit=raw_limit)
+        df = resample_bars(raw, timeframe)
+        if not df.empty:
+            now_utc = pd.Timestamp.now(tz="UTC")
+            raw_last_ts = raw.index[-1] if not raw.empty else df.index[-1]
+            stale_after = pd.Timedelta(minutes=5)
+            if now_utc - raw_last_ts > stale_after and settings.has_credentials():
+                logger.info(
+                    "%s: local crypto data is stale (last bar %s, %.0f min ago) — "
+                    "fetching catch-up from Alpaca REST",
+                    symbol, raw_last_ts, (now_utc - raw_last_ts).total_seconds() / 60,
+                )
+                try:
+                    fresh = fetch_crypto_bars(symbol, timeframe="1Min", lookback_days=2)
+                    if not fresh.empty:
+                        store.upsert_bars_df(symbol, RAW_TIMEFRAME, fresh)
+                        raw = store.get_bars(symbol, RAW_TIMEFRAME, limit=raw_limit)
+                        df = resample_bars(raw, timeframe)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Stale-data crypto catch-up fetch failed for %s", symbol)
+            # Reused as-is: it just keeps the most recent N distinct ET
+            # calendar dates present in the data, which for continuously-
+            # trading crypto simply means "the last ~N*24h", no different
+            # in spirit from trimming a stock chart to recent trading days.
+            return _limit_to_recent_trading_days(df)
+
+    if not settings.has_credentials():
+        return pd.DataFrame()
+
+    lookback_days = 5 if timeframe != "1Day" else max(60, limit * 2)
+    return fetch_crypto_bars(symbol, timeframe=timeframe, lookback_days=lookback_days, limit=limit)
 
 
 # Fixed indicator set/timeframe for the Watchlists table's Trend column —
@@ -590,6 +698,64 @@ async def get_chart(
     )
 
 
+@app.get("/api/crypto-chart")
+async def get_crypto_chart(
+    symbol: str, timeframe: str = "15Min", indicators: str = "", limit: int = 300
+):
+    """Crypto counterpart to /api/chart — same Plotly-figure-as-JSON shape,
+    same indicator math and composite signal (both are asset-agnostic, they
+    just operate on an OHLCV DataFrame), but sourced from Alpaca's crypto
+    market data instead of stocks, with no market-data-window gating (crypto
+    trades 24/7) and a Binance quote link instead of CNBC's. `symbol` is a
+    BASE/QUOTE pair like 'BTC/USDT'."""
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return JSONResponse({"error": "symbol is required"}, status_code=400)
+    if "/" not in symbol:
+        return JSONResponse({"error": "symbol must be a pair like BTC/USDT"}, status_code=400)
+    if crypto_stream_manager is not None:
+        crypto_stream_manager.subscribe_symbol(symbol)
+
+    try:
+        df = _load_crypto_symbol_df(symbol, timeframe, limit)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    if df.empty:
+        return JSONResponse({"error": "no data available for this pair yet — check the symbol is correct (e.g. BTC/USDT)"}, status_code=404)
+
+    indicator_list = [i.strip() for i in indicators.split(",") if i.strip()]
+    display_name = crypto_display_name(symbol)
+
+    try:
+        signals = compute_signals(df, indicator_list)
+    except Exception:
+        logger.warning(
+            "compute_signals failed for %s (indicators=%s) — chart will render without trend suffixes",
+            symbol, indicator_list, exc_info=True,
+        )
+        signals = {}
+
+    composite = compute_composite_signal(signals)
+
+    try:
+        fig = build_candlestick_figure(
+            df, symbol, timeframe, indicator_list,
+            company_name=display_name, signals=signals, composite=composite,
+            quote_url=binance_quote_url(symbol),
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    return JSONResponse(
+        {
+            "figure": fig.to_json(),
+            "company_name": display_name,
+            "signals": signals,
+            "composite": composite,
+        }
+    )
+
+
 @app.get("/api/backtest")
 async def api_backtest(
     symbol: str, timeframe: str = "5Min", indicators: str = "", limit: int = 500
@@ -619,6 +785,38 @@ async def api_backtest(
         return JSONResponse({"error": str(exc)}, status_code=400)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Backtest failed for %s", symbol)
+        return JSONResponse({"error": f"Backtest failed: {exc}"}, status_code=500)
+
+    return JSONResponse({"symbol": symbol, "timeframe": timeframe, **result})
+
+
+@app.get("/api/crypto-backtest")
+async def api_crypto_backtest(
+    symbol: str, timeframe: str = "15Min", indicators: str = "", limit: int = 500
+) -> JSONResponse:
+    """Crypto counterpart to /api/backtest — same run_backtest() engine,
+    sourced from crypto bars instead of stock bars."""
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return JSONResponse({"error": "symbol is required"}, status_code=400)
+    if "/" not in symbol:
+        return JSONResponse({"error": "symbol must be a pair like BTC/USDT"}, status_code=400)
+
+    try:
+        df = _load_crypto_symbol_df(symbol, timeframe, limit)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    if df.empty:
+        return JSONResponse({"error": "no data available for this pair yet — check the symbol is correct (e.g. BTC/USDT)"}, status_code=404)
+
+    indicator_list = [i.strip() for i in indicators.split(",") if i.strip()] or None
+
+    try:
+        result = await asyncio.to_thread(run_backtest, df, indicator_list)
+    except BacktestError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Crypto backtest failed for %s", symbol)
         return JSONResponse({"error": f"Backtest failed: {exc}"}, status_code=500)
 
     return JSONResponse({"symbol": symbol, "timeframe": timeframe, **result})

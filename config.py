@@ -95,6 +95,16 @@ class Settings:
             "WATCHLIST", ["SPY", "QQQ", "DIA", "IWM"]
         )
     )
+    # Default crypto pairs backfilled/streamed on startup for the "Focus
+    # Crypto Analysis" page — same account credentials as stocks (Alpaca
+    # runs its own crypto exchange), but a separate watchlist since crypto
+    # symbols use a BASE/QUOTE format (e.g. BTC/USDT) and trade 24/7 rather
+    # than during NYSE/Nasdaq hours.
+    crypto_watchlist: list[str] = field(
+        default_factory=lambda: _list_env(
+            "CRYPTO_WATCHLIST", ["BTC/USDT", "ETH/USDT"]
+        )
+    )
     db_path: str = field(default_factory=lambda: os.getenv("DB_PATH", "data_store.db"))
     # How many days of raw 1-min bars to keep in data_store.db before a
     # periodic background job prunes them (see web/app.py's
