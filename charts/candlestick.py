@@ -34,6 +34,7 @@ INDICATOR_LABELS = {
     "sar": "Parabolic SAR",
     "kdj": "KDJ",
     "vwap": "VWAP",
+    "mtm": "MTM",
 }
 
 # Matches the up/down colors used everywhere else in the app (candle
@@ -356,6 +357,27 @@ def build_candlestick_figure(
                     x=x_labels, y=macd_df["signal"], name="Signal",
                     line=dict(width=2, color="#f59e0b"),
                     hovertemplate="Signal: %{y:.3f}<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+            fig.add_hline(y=0, line=dict(dash="dash", width=1), row=row, col=1)
+        elif ind == "mtm":
+            mtm_df = results["mtm"]
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=mtm_df["mtm"], name="MTM",
+                    line=dict(width=3, color="#2563eb"),
+                    hovertemplate="MTM: %{y:.3f}<extra></extra>",
+                ),
+                row=row,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=mtm_df["maMtm"], name="MAMTM",
+                    line=dict(width=2, color="#f59e0b"),
+                    hovertemplate="MAMTM: %{y:.3f}<extra></extra>",
                 ),
                 row=row,
                 col=1,

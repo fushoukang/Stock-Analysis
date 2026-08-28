@@ -10,11 +10,12 @@ from indicators.sar import parabolic_sar
 from indicators.kdj import kdj
 from indicators.vwap import vwap
 from indicators.macd import macd
+from indicators.mtm import mtm
 
 # Indicators whose values live on the same scale as price (overlay on candles)
 OVERLAY_INDICATORS = {"sma", "ema", "boll", "sar", "vwap"}
 # Indicators plotted in their own subplot below the candles
-OSCILLATOR_INDICATORS = {"rsi", "kdj", "macd"}
+OSCILLATOR_INDICATORS = {"rsi", "kdj", "macd", "mtm"}
 
 DEFAULT_PARAMS = {
     "sma": {"window": 20},
@@ -27,6 +28,7 @@ DEFAULT_PARAMS = {
     # average of the bars themselves, resetting each session.
     "vwap": {},
     "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "mtm": {"n": 12, "m": 6},
 }
 
 
@@ -35,7 +37,7 @@ def compute_indicators(
 ) -> dict[str, pd.Series | pd.DataFrame]:
     """
     df: OHLCV DataFrame indexed by timestamp, columns open/high/low/close/volume.
-    indicators: subset of {"sma","ema","boll","rsi","sar","kdj","vwap","macd"}.
+    indicators: subset of {"sma","ema","boll","rsi","sar","kdj","vwap","macd","mtm"}.
     params: optional per-indicator override dict, e.g. {"sma": {"window": 50}}.
 
     Returns {indicator_name: Series or DataFrame}, aligned to df's index.
@@ -63,6 +65,8 @@ def compute_indicators(
             results["vwap"] = vwap(df, **p)
         elif name == "macd":
             results["macd"] = macd(close, **p)
+        elif name == "mtm":
+            results["mtm"] = mtm(close, **p)
         else:
             raise ValueError(f"Unknown indicator '{name}'")
 

@@ -21,6 +21,7 @@ from indicators.sar import parabolic_sar
 from indicators.kdj import kdj as _kdj
 from indicators.vwap import vwap as _vwap
 from indicators.macd import macd as _macd
+from indicators.mtm import mtm as _mtm
 
 logger = logging.getLogger("indicators.signals")
 
@@ -40,6 +41,7 @@ DEFAULT_PARAMS = {
     "sar": {"af_step": 0.02, "af_max": 0.2},
     "kdj": {"n": 9, "k_period": 3, "d_period": 3},
     "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "mtm": {"n": 12, "m": 6},
 }
 
 
@@ -156,6 +158,20 @@ def compute_signals(
                     out["macd"] = _signal(BEARISH, f"MACD ({m:.2f}) is below Signal ({s:.2f}){zero_note}")
                 else:
                     out["macd"] = _signal(NEUTRAL, "MACD equals Signal")
+
+            elif name == "mtm":
+                mtm_df = _mtm(close, **p)
+                mtm_val = mtm_df["mtm"].iloc[-1] if len(mtm_df) else float("nan")
+                ma_mtm = mtm_df["maMtm"].iloc[-1] if len(mtm_df) else float("nan")
+                if pd.isna(mtm_val) or pd.isna(ma_mtm):
+                    continue
+                zero_note = " (above the zero line)" if mtm_val > 0 else " (below the zero line)"
+                if mtm_val > ma_mtm:
+                    out["mtm"] = _signal(BULLISH, f"MTM ({mtm_val:.2f}) is above MAMTM ({ma_mtm:.2f}){zero_note}")
+                elif mtm_val < ma_mtm:
+                    out["mtm"] = _signal(BEARISH, f"MTM ({mtm_val:.2f}) is below MAMTM ({ma_mtm:.2f}){zero_note}")
+                else:
+                    out["mtm"] = _signal(NEUTRAL, "MTM equals MAMTM")
 
             elif name == "rsi":
                 series = _rsi(close, **p)

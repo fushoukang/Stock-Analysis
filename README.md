@@ -16,13 +16,17 @@ and computes indicators, but never places, modifies, or cancels orders.
   doesn't grow unbounded
 - Indicators: MA, SMA, EMA, Bollinger Bands (BOLL), MACD (12/26/9 EMA
   convergence-divergence, with its own histogram, plotted just ahead of
-  RSI in the indicator checkboxes and chart), RSI, Parabolic SAR, KDJ,
-  VWAP (Volume-Weighted Average Price — cumulative, resets each session,
-  computed directly from the bars at whichever timeframe is selected)
+  RSI in the indicator checkboxes and chart), MTM (Momentum, MTM(12,6) —
+  MTM = close minus the close 12 bars ago, MAMTM = a 6-period moving
+  average of that momentum line; plotted just after MACD), RSI, Parabolic
+  SAR, KDJ, VWAP (Volume-Weighted Average Price — cumulative, resets each
+  session, computed directly from the bars at whichever timeframe is
+  selected)
 - Trend read (`indicators/signals.py`): a bullish/bearish/neutral score for
   the always-on SMA overlay plus every currently selected indicator, each
   scored against that indicator's standard textbook rule (e.g. price vs.
-  EMA, RSI vs. 50/70/30, K vs. D, price vs. VWAP, MACD vs. Signal) using
+  EMA, RSI vs. 50/70/30, K vs. D, price vs. VWAP, MACD vs. Signal,
+  MTM vs. MAMTM) using
   only the latest bar. Shown as a colored "— Bullish/Bearish/Neutral"
   suffix baked directly into that indicator's own subplot title (SMA's
   reading rides on the price chart's title, since that's where the SMA
@@ -184,6 +188,7 @@ indicators/
   moving_average.py     SMA, EMA, MA
   bollinger.py           Bollinger Bands
   macd.py                 MACD
+  mtm.py                   MTM (Momentum)
   rsi.py                 RSI
   sar.py                 Parabolic SAR
   kdj.py                 KDJ

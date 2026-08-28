@@ -81,6 +81,21 @@ def test_macd_signal_present_on_trending_data():
     assert out["macd"]["label"] in (BULLISH, BEARISH, NEUTRAL)
 
 
+def test_mtm_signal_present_on_trending_data():
+    df = _rising_df(n=40)
+    out = compute_signals(df, ["mtm"])
+    assert "mtm" in out
+    assert out["mtm"]["label"] in (BULLISH, BEARISH, NEUTRAL)
+    assert "MTM" in out["mtm"]["reason"] and "MAMTM" in out["mtm"]["reason"]
+
+
+def test_mtm_signal_omitted_when_not_enough_bars():
+    # MTM(12,6) needs 12+6=18 bars before MAMTM has a value.
+    df = _rising_df(n=15)
+    out = compute_signals(df, ["mtm"])
+    assert "mtm" not in out
+
+
 def test_boll_signal_overbought_when_price_pierces_upper_band():
     # Flat history, then one big spike up on the last bar — should read as
     # above the upper band (bearish/overbought), not just "above the mid".

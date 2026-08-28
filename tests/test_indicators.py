@@ -12,6 +12,7 @@ from indicators.bollinger import bollinger_bands
 from indicators.kdj import kdj
 from indicators.vwap import vwap
 from indicators.sar import parabolic_sar
+from indicators.mtm import mtm
 
 from conftest import make_ohlcv_df
 
@@ -152,3 +153,34 @@ def test_parabolic_sar_too_short_returns_all_nan():
     out = parabolic_sar(df)
     assert len(out) == 1
     assert out.isna().all()
+
+
+def test_mtm_matches_manual_momentum_calc():
+    s = pd.Series(np.arange(1, 41, dtype=float))  # strictly +1/step
+    out = mtm(s, n=12, m=6)
+    assert list(out.columns) == ["mtm", "maMtm"]
+    # Constant +1/step series -> MTM(12) is constant 12 once warmed up, and
+    # MAMTM (a moving average of a constant) equals that same constant.
+    assert out["mtm"].iloc[-1] == pytest.approx(12.0)
+    assert out["maMtm"].iloc[-1] == pytest.approx(12.0)
+
+
+def test_mtm_first_n_values_are_nan_before_theres_a_reference_close():
+    s = pd.Series(np.arange(1, 21, dtype=float))
+    out = mtm(s, n=12, m=6)
+    assert out["mtm"].iloc[:12].isna().all()
+    assert out["mtm"].iloc[12:].notna().all()
+
+
+def test_mtm_default_params_are_12_6():
+    s = pd.Series(np.arange(1, 41, dtype=float))
+    default = mtm(s)
+    explicit = mtm(s, n=12, m=6)
+    pd.testing.assert_frame_equal(default, explicit)
+
+
+def test_mtm_zero_for_flat_price():
+    s = pd.Series([100.0] * 30)
+    out = mtm(s, n=12, m=6)
+    assert out["mtm"].iloc[-1] == pytest.approx(0.0)
+    assert out["maMtm"].iloc[-1] == pytest.approx(0.0)
