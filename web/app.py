@@ -222,6 +222,32 @@ async def on_startup() -> None:
         crypto_stream_manager.start()
         logger.info("Crypto live stream started for: %s", ", ".join(crypto_symbols))
 
+    # Crypto KDJ cross monitor — same K/D-cross detection and email alerting
+    # as the stock monitor above, but watching CRYPTO_KDJ_MONITOR_SYMBOLS
+    # (default BTC/USDT) via its own independent watch-list source and email
+    # on/off switch, and running unconditionally since crypto trades 24/7 (no
+    # market-data-window gating here, unlike the stock backfill above).
+    crypto_kdj_symbols = settings.crypto_kdj_monitor_symbols
+    if crypto_kdj_symbols:
+        if not settings.has_smtp_credentials():
+            logger.warning(
+                "SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD not set — the crypto KDJ "
+                "monitor will detect crosses but can't email alerts until these are set."
+            )
+        crypto_kdj_monitor = KDJMonitor(
+            store,
+            on_alert=_broadcast_kdj_alert,
+            symbols_provider=lambda: settings.crypto_kdj_monitor_symbols,
+            email_alerts_enabled=lambda: settings.crypto_kdj_email_alerts_enabled,
+            label="crypto",
+        )
+        asyncio.create_task(crypto_kdj_monitor.run_forever())
+        logger.info(
+            "Crypto KDJ monitor started (every %ss) for: %s",
+            settings.kdj_check_interval_sec,
+            ", ".join(crypto_kdj_symbols),
+        )
+
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
@@ -323,6 +349,8 @@ async def status() -> JSONResponse:
             "crypto_streaming": crypto_stream_manager is not None,
             "crypto_stream_connected": crypto_stream_manager.is_connected() if crypto_stream_manager is not None else False,
             "crypto_watchlist": settings.crypto_watchlist,
+            "crypto_kdj_monitor_symbols": settings.crypto_kdj_monitor_symbols,
+            "crypto_kdj_email_alerts_enabled": settings.crypto_kdj_email_alerts_enabled,
         }
     )
 

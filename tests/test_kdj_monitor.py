@@ -1,11 +1,31 @@
-"""Tests for alerts/kdj_monitor.py: cross detection and monitor-list
-read/write (monitor_list.txt)."""
+"""Tests for alerts/kdj_monitor.py: cross detection, monitor-list
+read/write (monitor_list.txt), and KDJMonitor's injectable symbol source /
+email switch (added so a second, independent instance can watch a different
+symbol set — e.g. crypto pairs — without touching monitor_list.txt or the
+stock email on/off setting)."""
 from __future__ import annotations
+
+import asyncio
 
 import pandas as pd
 import pytest
 
-from alerts.kdj_monitor import detect_cross, load_monitor_symbols, save_monitor_symbols
+from config import settings
+from alerts.kdj_monitor import (
+    KDJMonitor,
+    detect_cross,
+    load_monitor_symbols,
+    save_monitor_symbols,
+)
+
+
+class _EmptyStore:
+    """Minimal store double: always reports no bars, so _check_symbol
+    returns immediately without needing real market data — enough to
+    exercise run_forever()'s symbol-iteration logic in isolation."""
+
+    def get_bars(self, *args, **kwargs):
+        return pd.DataFrame()
 
 
 def _kdj_df(k_values: list[float], d_values: list[float]) -> pd.DataFrame:
@@ -76,3 +96,50 @@ def test_save_monitor_symbols_drops_blanks():
         p = Path(d) / "list.txt"
         result = save_monitor_symbols(["", "  ", "spy", "SPY"], p)
         assert result == ["SPY"]
+
+
+def test_kdj_monitor_defaults_to_monitor_list_and_global_email_switch():
+    mon = KDJMonitor(_EmptyStore())
+    assert mon.symbols_provider is load_monitor_symbols
+    assert mon.email_alerts_enabled() == settings.kdj_email_alerts_enabled
+    assert mon.label == ""
+
+
+def test_kdj_monitor_honors_injected_symbols_provider_and_email_switch():
+    """A second monitor instance (e.g. for crypto) must read symbols from
+    its own injected source, not monitor_list.txt, and must consult its own
+    email on/off callable, not the global stock switch."""
+    mon = KDJMonitor(
+        _EmptyStore(),
+        symbols_provider=lambda: ["BTC/USDT"],
+        email_alerts_enabled=lambda: False,
+        label="crypto",
+    )
+    assert mon.symbols_provider() == ["BTC/USDT"]
+    assert mon.email_alerts_enabled() is False
+    assert mon.label == "crypto"
+
+
+def test_run_forever_pulls_symbols_from_the_injected_provider_each_cycle(monkeypatch):
+    """Regression guard: run_forever() must call self.symbols_provider(),
+    not the module-level load_monitor_symbols(), so an injected provider
+    (e.g. a crypto watch list) actually takes effect."""
+    calls: list[int] = []
+
+    def _provider():
+        calls.append(1)
+        return ["BTC/USDT"]
+
+    class _StopLoop(Exception):
+        pass
+
+    async def _boom_sleep(*_a, **_k):
+        raise _StopLoop()
+
+    monkeypatch.setattr(asyncio, "sleep", _boom_sleep)
+
+    mon = KDJMonitor(_EmptyStore(), symbols_provider=_provider)
+    with pytest.raises(_StopLoop):
+        asyncio.run(mon.run_forever())
+
+    assert calls == [1]  # provider was called exactly once before the loop stopped

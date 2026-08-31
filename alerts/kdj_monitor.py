@@ -113,12 +113,31 @@ class KDJMonitor:
         self,
         store: BarStore,
         on_alert: Callable[[dict], Awaitable[None]] | None = None,
+        symbols_provider: Callable[[], list[str]] | None = None,
+        email_alerts_enabled: Callable[[], bool] | None = None,
+        label: str = "",
     ):
         self.store = store
         # Optional async callback invoked with a small dict describing the
         # cross, in addition to the email — used to push a live on-screen
         # notification over the WebSocket (see web/app.py).
         self.on_alert = on_alert
+        # Where to read the watch list from on every cycle. Defaults to
+        # monitor_list.txt (the original stock behavior) — pass a different
+        # callable (e.g. `lambda: settings.crypto_kdj_monitor_symbols`) to run
+        # a second, independent monitor over a different symbol set, such as
+        # the crypto pairs on the Focus Crypto Analysis page.
+        self.symbols_provider = symbols_provider or load_monitor_symbols
+        # Whether to actually send the email for a detected cross (the
+        # on-screen alert and persisted history always fire regardless).
+        # Defaults to the global stock switch; pass a different callable to
+        # decouple email on/off between separate monitor instances.
+        self.email_alerts_enabled = email_alerts_enabled or (
+            lambda: settings.kdj_email_alerts_enabled
+        )
+        # Purely cosmetic — included in log lines so multiple concurrent
+        # monitor instances (e.g. "stock" and "crypto") are distinguishable.
+        self.label = label
         self._last_alert_bar: dict[str, pd.Timestamp] = {}
         # Symbols we've seen at least one check for — used to skip alerting
         # on the very first check (see module docstring).
@@ -196,11 +215,12 @@ class KDJMonitor:
         except Exception:
             logger.warning("Failed to persist KDJ alert history for %s", symbol, exc_info=True)
 
-        if settings.kdj_email_alerts_enabled:
+        if self.email_alerts_enabled():
             await asyncio.to_thread(send_email_alert, subject, body)
         else:
             logger.info(
-                "KDJ_EMAIL_ALERTS_ENABLED is off — skipping email for %s (on-screen alert still fires)",
+                "%semail alerts are off — skipping email for %s (on-screen alert still fires)",
+                f"[{self.label}] " if self.label else "",
                 symbol,
             )
 
@@ -220,13 +240,14 @@ class KDJMonitor:
                 logger.exception("KDJ on_alert callback failed for %s", symbol)
 
     async def run_forever(self) -> None:
+        prefix = f"[{self.label}] " if self.label else ""
         while True:
-            symbols = load_monitor_symbols()
+            symbols = self.symbols_provider()
             if not symbols:
-                logger.warning("No symbols in monitor list — KDJ monitor is idle.")
+                logger.warning("%sNo symbols in monitor list — KDJ monitor is idle.", prefix)
             for symbol in symbols:
                 try:
                     await self._check_symbol(symbol)
                 except Exception:
-                    logger.exception("KDJ check failed for %s", symbol)
+                    logger.exception("%sKDJ check failed for %s", prefix, symbol)
             await asyncio.sleep(settings.kdj_check_interval_sec)

@@ -153,6 +153,24 @@ class Settings:
     kdj_email_alerts_enabled: bool = field(
         default_factory=lambda: _bool_env("KDJ_EMAIL_ALERTS_ENABLED", True)
     )
+
+    # --- Crypto KDJ cross alerting (Focus Crypto Analysis page) ---
+    # Separate watch list from monitor_list.txt (which only ever holds stock
+    # tickers) and a separate email on/off switch from kdj_email_alerts_enabled
+    # above, so turning stock alerts on/off never silently changes crypto
+    # alerting or vice versa. Runs 24/7 like the rest of the crypto data path
+    # — no market-hours gating. Symbols here should also be present in
+    # CRYPTO_WATCHLIST (or backfilled/streamed some other way) so the monitor
+    # actually has live bars to check; it reads whatever's already in the
+    # shared SQLite bars table, same as the stock monitor.
+    crypto_kdj_monitor_symbols: list[str] = field(
+        default_factory=lambda: _list_env(
+            "CRYPTO_KDJ_MONITOR_SYMBOLS", ["BTC/USDT"]
+        )
+    )
+    crypto_kdj_email_alerts_enabled: bool = field(
+        default_factory=lambda: _bool_env("CRYPTO_KDJ_EMAIL_ALERTS_ENABLED", True)
+    )
     # SMTP credentials used to send the alert email (no MCP mail connector here
     # supports unattended sending — only drafting — so this goes out via plain
     # SMTP). For Gmail: smtp.gmail.com / port 587 / an App Password (not your

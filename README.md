@@ -63,19 +63,30 @@ and computes indicators, but never places, modifies, or cancels orders.
   live stream just run continuously. One deliberate scope difference from
   the stock page: the chart reloads in full on each new bar (roughly once
   per interval) rather than also smoothing the title price between
-  individual trade ticks, and there's no KDJ alert monitor for crypto pairs
-  yet. The chart title links out to the pair's Binance trade page
-  (`data/crypto_info.py`) instead of a CNBC quote page, and shows a small
-  static friendly name (e.g. "Bitcoin") for common base assets
-- KDJ cross monitor: watches the symbols in `monitor_list.txt`, recomputes a
-  rolling 15-minute KDJ every 2 minutes (`KDJ_CHECK_INTERVAL_SEC`) from the
-  live 1-min stream, and emails an alert if K and D crossed within the last
-  5 minutes (`KDJ_FRESHNESS_WINDOW_MIN`, both configurable in `.env`) — which
-  is the same moment K, D, and J are all equal, since J = 3K − 2D. Emails can
-  be turned off entirely with `KDJ_EMAIL_ALERTS_ENABLED=false` in `.env`
-  (default `true`) — the monitor keeps running and detecting crosses either
-  way, and the on-screen WebSocket alert in the GUI keeps firing; only the
-  email is silenced
+  individual trade ticks. The chart title links out to the pair's Binance
+  trade page (`data/crypto_info.py`) instead of a CNBC quote page, and shows
+  a small static friendly name (e.g. "Bitcoin") for common base assets
+- KDJ cross monitor: two independent instances of the same `KDJMonitor`
+  class (`alerts/kdj_monitor.py`) — one for stocks, one for crypto — each
+  recompute a rolling 15-minute KDJ every 2 minutes (`KDJ_CHECK_INTERVAL_SEC`,
+  shared) from the live 1-min stream and email an alert if K and D crossed
+  within the last 5 minutes (`KDJ_FRESHNESS_WINDOW_MIN`, shared) — which is
+  the same moment K, D, and J are all equal, since J = 3K − 2D. On-screen
+  alerts show up as chips next to the indicator checkboxes on whichever page
+  matches the symbol (crypto pairs always contain "/", stock tickers never
+  do, so the shared WebSocket alert message routes to the right page
+  automatically)
+  - **Stock**: watches the symbols in `monitor_list.txt`. Emails toggle with
+    `KDJ_EMAIL_ALERTS_ENABLED` in `.env` (default `true`)
+  - **Crypto**: watches `CRYPTO_KDJ_MONITOR_SYMBOLS` in `.env` (default
+    `BTC/USDT`), runs 24/7 like the rest of the crypto data path (no
+    market-hours gating). Emails toggle independently with
+    `CRYPTO_KDJ_EMAIL_ALERTS_ENABLED` (default `true`), so turning stock
+    alert emails off never silently silences crypto ones or vice versa
+  - Either way, the monitor keeps running and detecting crosses even with its
+    email switch off, and the on-screen WebSocket alert keeps firing — only
+    the email is silenced. Both instances email the same `ALERT_EMAIL_TO`
+    address via the same SMTP credentials
 - KDJ alert history: every cross the monitor detects is persisted to the
   local SQLite store (`kdj_alerts` table, `BarStore.record_kdj_alert`), not
   just emailed/pushed live. A background loop (`_kdj_alert_backfill_loop` in
@@ -147,14 +158,17 @@ and computes indicators, but never places, modifies, or cancels orders.
    only if you specifically want a narrower/wider window than early+regular+
    post market hours.
 
-4. (Optional) To enable KDJ cross email alerts: put the symbols to watch in
-   `monitor_list.txt` (whitespace/comma-separated), and fill in `SMTP_HOST`,
-   `SMTP_USERNAME`, `SMTP_PASSWORD` in `.env`. For Gmail, use an App Password
-   (https://myaccount.google.com/apppasswords) — not your normal password.
-   `ALERT_EMAIL_TO` controls where the alert goes. Without SMTP credentials
-   set, the monitor still runs and logs detected crosses, it just can't
-   email them. Set `KDJ_EMAIL_ALERTS_ENABLED=false` to turn the emails off
-   without touching SMTP credentials or stopping the monitor.
+4. (Optional) To enable KDJ cross email alerts: put the stock symbols to
+   watch in `monitor_list.txt` (whitespace/comma-separated) and/or the
+   crypto pairs to watch in `CRYPTO_KDJ_MONITOR_SYMBOLS` in `.env` (default
+   `BTC/USDT`), then fill in `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`.
+   For Gmail, use an App Password (https://myaccount.google.com/apppasswords)
+   — not your normal password. `ALERT_EMAIL_TO` controls where both monitors'
+   alerts go. Without SMTP credentials set, both monitors still run and log
+   detected crosses, they just can't email them. Set
+   `KDJ_EMAIL_ALERTS_ENABLED=false` / `CRYPTO_KDJ_EMAIL_ALERTS_ENABLED=false`
+   to turn either monitor's emails off independently, without touching SMTP
+   credentials or stopping either monitor.
 
 ## Run
 
@@ -200,6 +214,7 @@ charts/
 alerts/
   email_alert.py          SMTP email sending
   kdj_monitor.py           resample -> KDJ -> cross detection -> alert, on a loop
+                            (run as two instances: stock + crypto, see config.py)
 backtesting.py          long/flat strategy simulation driven by the composite signal
 web/
   app.py                 FastAPI app: REST + WebSocket + static GUI
@@ -238,10 +253,11 @@ development) rather than as part of this pytest suite.
   Add auth before exposing it beyond localhost.
 - IEX (free) data feed is the default; switch `ALPACA_DATA_FEED=sip` in
   `.env` if you have a SIP subscription for full-market data.
-- The Focus Crypto Analysis page doesn't have a KDJ cross monitor/alert
-  history yet (that's still stock-only, driven by `monitor_list.txt`) — a
-  natural follow-up would be a `crypto_monitor_list.txt` equivalent reusing
-  `alerts/kdj_monitor.py`'s cross-detection logic against crypto bars.
+- The crypto KDJ monitor's watch list (`CRYPTO_KDJ_MONITOR_SYMBOLS`) is a
+  plain comma-separated `.env` value, unlike the stock monitor's editable
+  `monitor_list.txt` (which also has an "Edit List" popup in the GUI). A
+  natural follow-up would be a `crypto_monitor_list.txt` file plus an
+  equivalent GUI editor, for parity with the stock side.
 - The market data window (`MARKET_DATA_START_ET`/`MARKET_DATA_END_ET`) now
   also checks a rule-based NYSE/Nasdaq holiday calendar (`market_holidays.py`
   — New Year's, MLK Day, Presidents Day, Good Friday, Memorial Day,

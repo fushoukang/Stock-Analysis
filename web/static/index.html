@@ -45,10 +45,10 @@
   .indicator-group label { display: flex; align-items: center; gap: 4px; font-size: 13px; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
   /* Sits to the right of the indicator checkboxes, with extra left margin on
      top of .controls' own gap so it reads as a visually separate section. */
-  #kdj-alerts-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: 28px; padding-left: 20px; border-left: 1px solid #e5e7eb; }
-  #kdj-alerts-label { font-size: 12px; font-weight: 600; color: #6b7280; white-space: nowrap; }
-  #kdj-alerts { display: flex; gap: 6px; flex-wrap: wrap; }
-  #kdj-alerts:empty::after { content: "none yet"; font-size: 12px; color: #9ca3af; font-style: italic; }
+  #kdj-alerts-wrap, #crypto-kdj-alerts-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: 28px; padding-left: 20px; border-left: 1px solid #e5e7eb; }
+  #kdj-alerts-label, #crypto-kdj-alerts-label { font-size: 12px; font-weight: 600; color: #6b7280; white-space: nowrap; }
+  #kdj-alerts, #crypto-kdj-alerts { display: flex; gap: 6px; flex-wrap: wrap; }
+  #kdj-alerts:empty::after, #crypto-kdj-alerts:empty::after { content: "none yet"; font-size: 12px; color: #9ca3af; font-style: italic; }
   .kdj-alert-chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 12px; white-space: nowrap; }
   .kdj-alert-chip.up { background: #dcfce7; color: #15803d; }
   .kdj-alert-chip.down { background: #fee2e2; color: #b91c1c; }
@@ -204,6 +204,10 @@
     <div>
       <button id="crypto-backtest-btn" type="button" title="Simulate a long/flat strategy driven by the composite signal (EMA+RSI+MACD by default) over this pair's recent history. Not investment advice.">Run Backtest</button>
     </div>
+    <div id="crypto-kdj-alerts-wrap">
+      <span id="crypto-kdj-alerts-label">KDJ Alerts</span>
+      <div id="crypto-kdj-alerts"></div>
+    </div>
   </div>
 
   <div id="crypto-msg"></div>
@@ -337,6 +341,7 @@ const cryptoBacktestCloseBtn = document.getElementById("crypto-backtest-close-bt
 const cryptoBacktestMsg = document.getElementById("crypto-backtest-msg");
 const cryptoBacktestSummary = document.getElementById("crypto-backtest-summary");
 const cryptoBacktestTradesTbody = document.getElementById("crypto-backtest-trades-tbody");
+const cryptoKdjAlertsDiv = document.getElementById("crypto-kdj-alerts");
 const placeholderView = document.getElementById("placeholder-view");
 const placeholderTitle = document.getElementById("placeholder-title");
 const placeholderSubtitle = document.getElementById("placeholder-subtitle");
@@ -959,6 +964,30 @@ function addKdjAlert(alert) {
   renderKdjAlerts();
 }
 
+// Crypto pairs always contain "/" (e.g. "BTC/USDT") and stock tickers never
+// do, so the shared WS "kdj_alert" message is routed to this strip vs. the
+// stock one above purely by checking for that character — same convention
+// used throughout for "bars"/"price" messages. Kept as separate arrays/DOM
+// nodes (rather than reusing kdjAlerts) so a burst of stock crosses can't
+// push a crypto alert off the visible list, and vice versa.
+let cryptoKdjAlerts = [];
+
+function renderCryptoKdjAlerts() {
+  cryptoKdjAlertsDiv.innerHTML = cryptoKdjAlerts.map(a => {
+    const cls = a.direction === "up" ? "up" : "down";
+    const arrow = a.direction === "up" ? "▲" : "▼";
+    const barTime = new Date(a.bar_time).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+    const title = `${a.timeframe} KDJ cross at ${barTime} — K=${a.k} D=${a.d} J=${a.j}`;
+    return `<span class="kdj-alert-chip ${cls}" title="${title}">${arrow} ${a.symbol} ${barTime}</span>`;
+  }).join("");
+}
+
+function addCryptoKdjAlert(alert) {
+  cryptoKdjAlerts.unshift(alert);
+  if (cryptoKdjAlerts.length > MAX_KDJ_ALERTS) cryptoKdjAlerts.length = MAX_KDJ_ALERTS;
+  renderCryptoKdjAlerts();
+}
+
 // Polls whether Alpaca's *stock* data path is currently reachable (the
 // 6am-6pm ET market data window — see config.py / data/stream.py). Outside
 // it the backend makes no stock Alpaca calls at all; this just shows that
@@ -1155,7 +1184,13 @@ function connectWebSocket() {
   ws.onmessage = (evt) => {
     const msg = JSON.parse(evt.data);
     if (msg.type === "kdj_alert") {
-      addKdjAlert(msg);
+      // Crypto pairs always contain "/", stock tickers never do — route to
+      // the matching page's alert strip (see addCryptoKdjAlert above).
+      if (typeof msg.symbol === "string" && msg.symbol.includes("/")) {
+        addCryptoKdjAlert(msg);
+      } else {
+        addKdjAlert(msg);
+      }
       return;
     }
     if (msg.type === "price") {
