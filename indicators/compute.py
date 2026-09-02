@@ -11,9 +11,10 @@ from indicators.kdj import kdj
 from indicators.vwap import vwap
 from indicators.macd import macd
 from indicators.mtm import mtm
+from indicators.supertrend import supertrend
 
 # Indicators whose values live on the same scale as price (overlay on candles)
-OVERLAY_INDICATORS = {"sma", "ema", "boll", "sar", "vwap"}
+OVERLAY_INDICATORS = {"sma", "ema", "boll", "sar", "vwap", "supertrend"}
 # Indicators plotted in their own subplot below the candles
 OSCILLATOR_INDICATORS = {"rsi", "kdj", "macd", "mtm"}
 
@@ -29,6 +30,7 @@ DEFAULT_PARAMS = {
     "vwap": {},
     "macd": {"fast": 12, "slow": 26, "signal": 9},
     "mtm": {"n": 12, "m": 6},
+    "supertrend": {"period": 10, "multiplier": 3.0},
 }
 
 
@@ -37,7 +39,7 @@ def compute_indicators(
 ) -> dict[str, pd.Series | pd.DataFrame]:
     """
     df: OHLCV DataFrame indexed by timestamp, columns open/high/low/close/volume.
-    indicators: subset of {"sma","ema","boll","rsi","sar","kdj","vwap","macd","mtm"}.
+    indicators: subset of {"sma","ema","boll","rsi","sar","kdj","vwap","macd","mtm","supertrend"}.
     params: optional per-indicator override dict, e.g. {"sma": {"window": 50}}.
 
     Returns {indicator_name: Series or DataFrame}, aligned to df's index.
@@ -67,6 +69,8 @@ def compute_indicators(
             results["macd"] = macd(close, **p)
         elif name == "mtm":
             results["mtm"] = mtm(close, **p)
+        elif name == "supertrend":
+            results["supertrend"] = supertrend(df, **p)
         else:
             raise ValueError(f"Unknown indicator '{name}'")
 

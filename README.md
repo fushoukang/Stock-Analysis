@@ -19,14 +19,18 @@ and computes indicators, but never places, modifies, or cancels orders.
   RSI in the indicator checkboxes and chart), MTM (Momentum, MTM(12,6) —
   MTM = close minus the close 12 bars ago, MAMTM = a 6-period moving
   average of that momentum line; plotted just after MACD), RSI, Parabolic
-  SAR, KDJ, VWAP (Volume-Weighted Average Price — cumulative, resets each
-  session, computed directly from the bars at whichever timeframe is
-  selected)
+  SAR, SuperTrend (ATR-based trend-following overlay, `SUPERTREND(10, 3.0)`
+  — a single line that flips sides of price on each trend change, in the
+  same family as Parabolic SAR but driven by ATR volatility instead of an
+  acceleration factor; plotted just after SAR, colored green while below
+  price/uptrend and red while above/downtrend), KDJ, VWAP
+  (Volume-Weighted Average Price — cumulative, resets each session,
+  computed directly from the bars at whichever timeframe is selected)
 - Trend read (`indicators/signals.py`): a bullish/bearish/neutral score for
   the always-on SMA overlay plus every currently selected indicator, each
   scored against that indicator's standard textbook rule (e.g. price vs.
   EMA, RSI vs. 50/70/30, K vs. D, price vs. VWAP, MACD vs. Signal,
-  MTM vs. MAMTM) using
+  MTM vs. MAMTM, SuperTrend's own trend flag) using
   only the latest bar. Shown as a colored "— Bullish/Bearish/Neutral"
   suffix baked directly into that indicator's own subplot title (SMA's
   reading rides on the price chart's title, since that's where the SMA
@@ -205,6 +209,7 @@ indicators/
   mtm.py                   MTM (Momentum)
   rsi.py                 RSI
   sar.py                 Parabolic SAR
+  supertrend.py           SuperTrend (ATR-based trend-following overlay)
   kdj.py                 KDJ
   vwap.py                 VWAP
   compute.py             aggregator used by the chart builder / API

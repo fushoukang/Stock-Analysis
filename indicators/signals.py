@@ -22,6 +22,7 @@ from indicators.kdj import kdj as _kdj
 from indicators.vwap import vwap as _vwap
 from indicators.macd import macd as _macd
 from indicators.mtm import mtm as _mtm
+from indicators.supertrend import supertrend as _supertrend
 
 logger = logging.getLogger("indicators.signals")
 
@@ -42,6 +43,7 @@ DEFAULT_PARAMS = {
     "kdj": {"n": 9, "k_period": 3, "d_period": 3},
     "macd": {"fast": 12, "slow": 26, "signal": 9},
     "mtm": {"n": 12, "m": 6},
+    "supertrend": {"period": 10, "multiplier": 3.0},
 }
 
 
@@ -200,6 +202,23 @@ def compute_signals(
                     out["sar"] = _signal(BEARISH, f"SAR dot (${last:.2f}) is above price — downtrend")
                 else:
                     out["sar"] = _signal(NEUTRAL, "SAR is exactly at price")
+
+            elif name == "supertrend":
+                st_df = _supertrend(df, **p)
+                last_line = st_df["supertrend"].iloc[-1] if len(st_df) else float("nan")
+                last_trend = st_df["trend"].iloc[-1] if len(st_df) else 0
+                if pd.isna(last_line):
+                    continue
+                if last_trend == 1:
+                    out["supertrend"] = _signal(
+                        BULLISH, f"SuperTrend (${last_line:.2f}) is below price — uptrend"
+                    )
+                elif last_trend == -1:
+                    out["supertrend"] = _signal(
+                        BEARISH, f"SuperTrend (${last_line:.2f}) is above price — downtrend"
+                    )
+                else:
+                    out["supertrend"] = _signal(NEUTRAL, "SuperTrend has no established trend yet")
 
             elif name == "kdj":
                 kdj_df = _kdj(df, **p)

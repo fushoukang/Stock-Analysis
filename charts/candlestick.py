@@ -35,6 +35,7 @@ INDICATOR_LABELS = {
     "kdj": "KDJ",
     "vwap": "VWAP",
     "mtm": "MTM",
+    "supertrend": "SuperTrend",
 }
 
 # Matches the up/down colors used everywhere else in the app (candle
@@ -122,8 +123,8 @@ def build_candlestick_figure(
     df: OHLCV DataFrame indexed by timestamp.
     indicators: list of indicator names, each rendered in its own subplot
         below the price/volume chart, e.g. ["boll","rsi","kdj"].
-        Price-scale indicators (ema/boll/sar) also get a thin close-price
-        line in their box for reference. SMA is always drawn overlaid
+        Price-scale indicators (ema/boll/sar/supertrend) also get a thin
+        close-price line in their box for reference. SMA is always drawn overlaid
         directly on the candlestick chart itself (not a separate box),
         regardless of what's in `indicators`.
     company_name: optional display name for the symbol (e.g. "Apple Inc."),
@@ -322,6 +323,31 @@ def build_candlestick_figure(
                 go.Scatter(
                     x=x_labels, y=sar_series.where(~is_up), name="SAR (down)", mode="markers",
                     marker=dict(size=7, symbol="circle", color="red"),
+                ),
+                row=row,
+                col=1,
+            )
+        elif ind == "supertrend":
+            st_df = results["supertrend"]
+            is_up = st_df["trend"] == 1
+            # Continuous line (unlike SAR's dots), colored by trend — the
+            # conventional SuperTrend look. Masking with .where() naturally
+            # breaks the line at each flip rather than drawing a diagonal
+            # jump between the up/down bands.
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=st_df["supertrend"].where(is_up), name="SuperTrend (up)",
+                    line=dict(width=3, color="green"),
+                    connectgaps=False,
+                ),
+                row=row,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels, y=st_df["supertrend"].where(~is_up), name="SuperTrend (down)",
+                    line=dict(width=3, color="red"),
+                    connectgaps=False,
                 ),
                 row=row,
                 col=1,

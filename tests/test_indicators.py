@@ -13,6 +13,7 @@ from indicators.kdj import kdj
 from indicators.vwap import vwap
 from indicators.sar import parabolic_sar
 from indicators.mtm import mtm
+from indicators.supertrend import supertrend
 
 from conftest import make_ohlcv_df
 
@@ -184,3 +185,44 @@ def test_mtm_zero_for_flat_price():
     out = mtm(s, n=12, m=6)
     assert out["mtm"].iloc[-1] == pytest.approx(0.0)
     assert out["maMtm"].iloc[-1] == pytest.approx(0.0)
+
+
+def test_supertrend_columns_and_length():
+    df = make_ohlcv_df(n=60)
+    out = supertrend(df, period=10, multiplier=3.0)
+    assert list(out.columns) == ["supertrend", "trend"]
+    assert len(out) == len(df)
+
+
+def test_supertrend_empty_df_returns_empty():
+    df = make_ohlcv_df(n=0)
+    out = supertrend(df)
+    assert len(out) == 0
+
+
+def test_supertrend_warmup_is_nan_before_atr_is_ready():
+    # ATR's ewm(min_periods=period) produces its first value at the period-th
+    # observation (index period-1, 0-based) — same warm-up convention as
+    # SAR/RSI.
+    df = make_ohlcv_df(n=30)
+    out = supertrend(df, period=10, multiplier=3.0)
+    assert out["supertrend"].iloc[:9].isna().all()
+    assert out["supertrend"].iloc[9:].notna().all()
+
+
+def test_supertrend_trend_is_always_plus_or_minus_one():
+    df = make_ohlcv_df(n=80)
+    out = supertrend(df, period=10, multiplier=3.0)
+    assert out["trend"].isin([1, -1]).all()
+
+
+def test_supertrend_line_sits_below_price_in_uptrend_above_in_downtrend():
+    # Same relationship as Parabolic SAR: once warmed up, the line always
+    # sits on the side of price that matches the current trend flag.
+    df = make_ohlcv_df(n=80)
+    out = supertrend(df, period=10, multiplier=3.0)
+    valid = out.iloc[10:]
+    close = df["close"].iloc[10:]
+    up = valid["trend"] == 1
+    assert (valid["supertrend"][up] <= close[up]).all()
+    assert (valid["supertrend"][~up] >= close[~up]).all()

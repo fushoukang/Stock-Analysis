@@ -124,6 +124,22 @@ def test_sar_signal_present_and_bounded_label():
     assert out["sar"]["label"] in (BULLISH, BEARISH, NEUTRAL)
 
 
+def test_supertrend_signal_present_and_bounded_label():
+    df = _rising_df()
+    out = compute_signals(df, ["supertrend"])
+    assert "supertrend" in out
+    assert out["supertrend"]["label"] in (BULLISH, BEARISH, NEUTRAL)
+    assert "SuperTrend" in out["supertrend"]["reason"]
+
+
+def test_supertrend_signal_omitted_when_not_enough_bars():
+    # period=10 default needs 10+ bars before ATR (and so the line) has a
+    # value.
+    df = _rising_df(n=5)
+    out = compute_signals(df, ["supertrend"])
+    assert "supertrend" not in out
+
+
 def test_unknown_indicator_name_is_silently_ignored():
     df = _rising_df()
     out = compute_signals(df, ["not_a_real_indicator"])
