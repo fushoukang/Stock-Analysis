@@ -342,6 +342,7 @@ async def index() -> FileResponse:
 async def status() -> JSONResponse:
     return JSONResponse(
         {
+            "app_version": settings.app_version,
             "has_credentials": settings.has_credentials(),
             "paper": settings.paper,
             "data_feed": settings.data_feed,

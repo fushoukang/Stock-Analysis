@@ -9,6 +9,11 @@ and computes indicators, but never places, modifies, or cancels orders.
 
 ## Features
 
+- Version number: `pyproject.toml`'s `version` field is the single source
+  of truth — shown next to the title in the GUI header (`vX.Y.Z`, via
+  `/api/status`'s `app_version`, read by `config.py`'s
+  `_read_pyproject_version()`). Bump the app's version by editing that one
+  line; nothing else needs to change
 - Real-time bar + trade streaming via Alpaca's WebSocket (`alpaca.data.live.StockDataStream`)
 - Historical backfill via Alpaca's REST market data API
 - Local SQLite storage of OHLCV bars, with a background job (every 6 hours)

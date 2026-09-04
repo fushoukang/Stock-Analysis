@@ -8,6 +8,7 @@
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f7f8fa; color: #1a1a1a; }
   header { background: #111827; color: white; padding: 14px 20px; display: flex; align-items: center; gap: 16px; }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  #app-version { font-size: 12px; font-weight: 400; color: #9ca3af; }
   #status-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; display: inline-block; margin-right: 6px; }
   #status-dot.live { background: #22c55e; }
   #status-dot.off { background: #ef4444; }
@@ -129,7 +130,7 @@
 </head>
 <body>
 <header>
-  <h1>Stock Trading Analysis</h1>
+  <h1>Stock Trading Analysis <span id="app-version" title="From pyproject.toml"></span></h1>
   <span id="ws-status"><span id="status-dot"></span><span id="status-text">connecting…</span></span>
   <span id="market-closed-banner">The market has closed. Live data resumes at <span id="market-reopen-time"></span> ET.</span>
   <select id="category-select">
@@ -329,6 +330,7 @@ const msgDiv = document.getElementById("msg");
 const wsStatusSpan = document.getElementById("ws-status");
 const statusDot = document.getElementById("status-dot");
 const statusText = document.getElementById("status-text");
+const appVersionSpan = document.getElementById("app-version");
 const marketClosedBanner = document.getElementById("market-closed-banner");
 const marketReopenTimeSpan = document.getElementById("market-reopen-time");
 const categorySelect = document.getElementById("category-select");
@@ -1033,6 +1035,7 @@ async function refreshMarketStatus() {
   try {
     const res = await fetch("/api/status");
     const body = await res.json();
+    if (body.app_version) appVersionSpan.textContent = `v${body.app_version}`;
     marketOpen = body.market_open !== false;
     marketReopenTimeSpan.textContent = body.market_data_start_et || "";
     applyMarketBannerVisibility();

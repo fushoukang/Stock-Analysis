@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import socket
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time
@@ -25,6 +26,24 @@ load_dotenv(PROJECT_ROOT / ".env")
 logger = logging.getLogger("config")
 
 EASTERN = ZoneInfo("America/New_York")
+
+
+def _read_pyproject_version() -> str:
+    """pyproject.toml's `version = "..."` is the single source of truth for
+    the app's version number (see README) — read it with a small regex
+    rather than a TOML parser, since this project targets Python 3.13+ but
+    is sometimes run under older interpreters that lack the stdlib
+    `tomllib` (added in 3.11), and pulling in a third-party TOML dependency
+    just for one string isn't worth it. Falls back to "unknown" if the file
+    is missing or the line isn't found, rather than raising — a broken
+    version display shouldn't ever stop the app from starting."""
+    try:
+        text = (PROJECT_ROOT / "pyproject.toml").read_text()
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        return m.group(1) if m else "unknown"
+    except Exception:
+        logger.warning("Could not read version from pyproject.toml", exc_info=True)
+        return "unknown"
 
 
 def detect_local_ipv4() -> str:
@@ -81,6 +100,10 @@ def _time_env(name: str, default: str) -> dt_time:
 
 @dataclass(frozen=True)
 class Settings:
+    # Read from pyproject.toml's `version = "..."` — see _read_pyproject_version
+    # above. That file is the single source of truth; this just surfaces it
+    # (e.g. in the GUI header, via /api/status) without duplicating the number.
+    app_version: str = field(default_factory=_read_pyproject_version)
     api_key: str = field(default_factory=lambda: os.getenv("ALPACA_API_KEY", ""))
     secret_key: str = field(default_factory=lambda: os.getenv("ALPACA_SECRET_KEY", ""))
     paper: bool = field(default_factory=lambda: _bool_env("ALPACA_PAPER", False))
