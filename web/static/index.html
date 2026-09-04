@@ -1035,7 +1035,7 @@ async function refreshMarketStatus() {
   try {
     const res = await fetch("/api/status");
     const body = await res.json();
-    if (body.app_version) appVersionSpan.textContent = `v${body.app_version}`;
+    if (body.app_version) appVersionSpan.textContent = `(v${body.app_version})`;
     marketOpen = body.market_open !== false;
     marketReopenTimeSpan.textContent = body.market_data_start_et || "";
     applyMarketBannerVisibility();
