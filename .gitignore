@@ -24,3 +24,7 @@ data_store.db
 # User's personal Watchlists data (name/note/symbols) — runtime data, not source
 watchlists.json
 
+# Live GUI toggle state for the crypto KDJ email-alert switch — runtime
+# data written by POST /api/crypto-kdj-email-alerts, not source
+crypto_kdj_alert_state.json
+

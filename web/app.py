@@ -36,7 +36,13 @@ from data.watchlists import (
     load_watchlists,
     update_watchlist,
 )
-from alerts.kdj_monitor import KDJMonitor, load_monitor_symbols, save_monitor_symbols
+from alerts.kdj_monitor import (
+    KDJMonitor,
+    load_monitor_symbols,
+    save_monitor_symbols,
+    load_crypto_kdj_email_alerts_enabled,
+    save_crypto_kdj_email_alerts_enabled,
+)
 from screeners.cnbc import cnbc_quote_url
 from screeners.tradingview import fetch_52_week_high, fetch_52_week_low, ScreenerError as TVScreenerError
 from screeners.halts import (
@@ -238,7 +244,7 @@ async def on_startup() -> None:
             store,
             on_alert=_broadcast_kdj_alert,
             symbols_provider=lambda: settings.crypto_kdj_monitor_symbols,
-            email_alerts_enabled=lambda: settings.crypto_kdj_email_alerts_enabled,
+            email_alerts_enabled=load_crypto_kdj_email_alerts_enabled,
             label="crypto",
         )
         asyncio.create_task(crypto_kdj_monitor.run_forever())
@@ -350,7 +356,7 @@ async def status() -> JSONResponse:
             "crypto_stream_connected": crypto_stream_manager.is_connected() if crypto_stream_manager is not None else False,
             "crypto_watchlist": settings.crypto_watchlist,
             "crypto_kdj_monitor_symbols": settings.crypto_kdj_monitor_symbols,
-            "crypto_kdj_email_alerts_enabled": settings.crypto_kdj_email_alerts_enabled,
+            "crypto_kdj_email_alerts_enabled": load_crypto_kdj_email_alerts_enabled(),
         }
     )
 
@@ -404,6 +410,34 @@ async def update_monitor_list(request: Request) -> JSONResponse:
             stream_manager.subscribe_symbol(sym)
 
     return JSONResponse({"symbols": saved})
+
+
+@app.post("/api/crypto-kdj-email-alerts")
+async def update_crypto_kdj_email_alerts(request: Request) -> JSONResponse:
+    """The "Email Alerts" toggle next to the KDJ Alerts chip strip on the
+    Focus Crypto Analysis page. Expects {"enabled": true|false}. Persisted
+    to crypto_kdj_alert_state.json (see alerts/kdj_monitor.py) so it
+    survives a restart, and takes effect on the crypto KDJ monitor's next
+    check cycle without one — the on-screen alert chips and persisted
+    history keep working either way; this only silences the email."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Request body must be JSON"}, status_code=400)
+
+    enabled = body.get("enabled") if isinstance(body, dict) else None
+    if not isinstance(enabled, bool):
+        return JSONResponse(
+            {"error": 'Expected a JSON body like {"enabled": true}'}, status_code=400
+        )
+
+    try:
+        saved = save_crypto_kdj_email_alerts_enabled(enabled)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to save crypto_kdj_alert_state.json")
+        return JSONResponse({"error": f"Failed to save: {exc}"}, status_code=500)
+
+    return JSONResponse({"enabled": saved})
 
 
 @app.get("/api/timeframes")

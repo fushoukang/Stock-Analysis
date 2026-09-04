@@ -84,9 +84,14 @@ and computes indicators, but never places, modifies, or cancels orders.
     `KDJ_EMAIL_ALERTS_ENABLED` in `.env` (default `true`)
   - **Crypto**: watches `CRYPTO_KDJ_MONITOR_SYMBOLS` in `.env` (default
     `BTC/USDT`), runs 24/7 like the rest of the crypto data path (no
-    market-hours gating). Emails toggle independently with
-    `CRYPTO_KDJ_EMAIL_ALERTS_ENABLED` (default `true`), so turning stock
-    alert emails off never silently silences crypto ones or vice versa
+    market-hours gating). Emails toggle independently from the stock
+    monitor's, via an "Email Alerts" switch right on the Focus Crypto
+    Analysis page (next to the KDJ Alerts chip strip) — flips live, no
+    restart, and persists to `crypto_kdj_alert_state.json`
+    (`POST /api/crypto-kdj-email-alerts`, `alerts/kdj_monitor.py`'s
+    `load_crypto_kdj_email_alerts_enabled`/`save_crypto_kdj_email_alerts_enabled`).
+    `CRYPTO_KDJ_EMAIL_ALERTS_ENABLED` in `.env` (default `true`) only sets
+    the starting value the first time that file doesn't exist yet
   - Either way, the monitor keeps running and detecting crosses even with its
     email switch off, and the on-screen WebSocket alert keeps firing — only
     the email is silenced. Both instances email the same `ALERT_EMAIL_TO`

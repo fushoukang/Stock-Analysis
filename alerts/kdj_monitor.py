@@ -26,6 +26,7 @@ Only genuinely real-time crosses are alerted on:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -91,6 +92,44 @@ def save_monitor_symbols(symbols: list[str], path: str | Path | None = None) -> 
     p = monitor_list_path(path)
     p.write_text("\n".join(cleaned) + ("\n" if cleaned else ""))
     return cleaned
+
+
+def crypto_kdj_alert_state_path(path: str | Path | None = None) -> Path:
+    p = Path(path or settings.crypto_kdj_alert_state_path)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return p
+
+
+def load_crypto_kdj_email_alerts_enabled(path: str | Path | None = None) -> bool:
+    """Live on/off switch for the crypto KDJ monitor's email alerts (the
+    "Email Alerts" toggle on the Focus Crypto Analysis page, next to the KDJ
+    Alerts chip strip). Re-read on every check cycle (see this module's
+    run_forever loop / _check_symbol, and web/app.py's crypto KDJMonitor
+    construction) so flipping the switch in the GUI takes effect on the
+    monitor's next cycle, no restart needed. Falls back to
+    settings.crypto_kdj_email_alerts_enabled (the .env default) the first
+    time this file doesn't exist yet, or if it's ever unreadable/corrupt."""
+    p = crypto_kdj_alert_state_path(path)
+    if not p.exists():
+        return settings.crypto_kdj_email_alerts_enabled
+    try:
+        data = json.loads(p.read_text())
+        return bool(data.get("email_alerts_enabled", settings.crypto_kdj_email_alerts_enabled))
+    except Exception:
+        logger.warning(
+            "Failed to read %s — falling back to CRYPTO_KDJ_EMAIL_ALERTS_ENABLED",
+            p, exc_info=True,
+        )
+        return settings.crypto_kdj_email_alerts_enabled
+
+
+def save_crypto_kdj_email_alerts_enabled(enabled: bool, path: str | Path | None = None) -> bool:
+    """Persists the GUI toggle's new state — see web/app.py's
+    POST /api/crypto-kdj-email-alerts."""
+    p = crypto_kdj_alert_state_path(path)
+    p.write_text(json.dumps({"email_alerts_enabled": bool(enabled)}))
+    return bool(enabled)
 
 
 def detect_cross(kdj_df: pd.DataFrame) -> str | None:

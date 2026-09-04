@@ -16,6 +16,8 @@ from alerts.kdj_monitor import (
     detect_cross,
     load_monitor_symbols,
     save_monitor_symbols,
+    load_crypto_kdj_email_alerts_enabled,
+    save_crypto_kdj_email_alerts_enabled,
 )
 
 
@@ -143,3 +145,23 @@ def test_run_forever_pulls_symbols_from_the_injected_provider_each_cycle(monkeyp
         asyncio.run(mon.run_forever())
 
     assert calls == [1]  # provider was called exactly once before the loop stopped
+
+
+def test_load_crypto_kdj_email_alerts_enabled_falls_back_when_file_missing(tmp_path):
+    missing = tmp_path / "does_not_exist.json"
+    assert load_crypto_kdj_email_alerts_enabled(missing) == settings.crypto_kdj_email_alerts_enabled
+
+
+def test_save_then_load_crypto_kdj_email_alerts_enabled_roundtrip(tmp_path):
+    p = tmp_path / "state.json"
+    assert save_crypto_kdj_email_alerts_enabled(False, p) is False
+    assert load_crypto_kdj_email_alerts_enabled(p) is False
+
+    assert save_crypto_kdj_email_alerts_enabled(True, p) is True
+    assert load_crypto_kdj_email_alerts_enabled(p) is True
+
+
+def test_load_crypto_kdj_email_alerts_enabled_falls_back_on_corrupt_file(tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text("{not valid json")
+    assert load_crypto_kdj_email_alerts_enabled(p) == settings.crypto_kdj_email_alerts_enabled

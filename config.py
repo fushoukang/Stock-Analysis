@@ -171,6 +171,17 @@ class Settings:
     crypto_kdj_email_alerts_enabled: bool = field(
         default_factory=lambda: _bool_env("CRYPTO_KDJ_EMAIL_ALERTS_ENABLED", True)
     )
+    # Where the GUI's live on/off switch for crypto KDJ email alerts (Focus
+    # Crypto Analysis page, next to the KDJ Alerts chip strip) persists its
+    # state. crypto_kdj_email_alerts_enabled above only supplies the
+    # starting value the very first time this file doesn't exist yet —
+    # after that, this file is the source of truth, so flipping the switch
+    # in the GUI survives a restart without needing to edit .env.
+    crypto_kdj_alert_state_path: str = field(
+        default_factory=lambda: os.getenv(
+            "CRYPTO_KDJ_ALERT_STATE_PATH", "crypto_kdj_alert_state.json"
+        )
+    )
     # SMTP credentials used to send the alert email (no MCP mail connector here
     # supports unattended sending — only drafting — so this goes out via plain
     # SMTP). For Gmail: smtp.gmail.com / port 587 / an App Password (not your

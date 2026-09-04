@@ -52,6 +52,8 @@
   .kdj-alert-chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 12px; white-space: nowrap; }
   .kdj-alert-chip.up { background: #dcfce7; color: #15803d; }
   .kdj-alert-chip.down { background: #fee2e2; color: #b91c1c; }
+  #crypto-kdj-email-toggle-label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #374151; cursor: pointer; white-space: nowrap; margin-left: 4px; }
+  #crypto-kdj-email-toggle-label input { cursor: pointer; }
   #chart, #crypto-chart { width: 100%; height: 78vh; background: white; padding-right: 40px; box-sizing: border-box; }
   #msg, #crypto-msg { padding: 8px 20px; font-size: 13px; color: #b45309; }
   /* Category dropdown pinned to the right of the title bar. */
@@ -207,6 +209,9 @@
     <div id="crypto-kdj-alerts-wrap">
       <span id="crypto-kdj-alerts-label">KDJ Alerts</span>
       <div id="crypto-kdj-alerts"></div>
+      <label id="crypto-kdj-email-toggle-label" title="Turn email alerts for KDJ crosses on this page on or off. The on-screen alert chips above keep showing either way — this only silences the email.">
+        <input type="checkbox" id="crypto-kdj-email-toggle"> Email
+      </label>
     </div>
   </div>
 
@@ -343,6 +348,7 @@ const cryptoBacktestMsg = document.getElementById("crypto-backtest-msg");
 const cryptoBacktestSummary = document.getElementById("crypto-backtest-summary");
 const cryptoBacktestTradesTbody = document.getElementById("crypto-backtest-trades-tbody");
 const cryptoKdjAlertsDiv = document.getElementById("crypto-kdj-alerts");
+const cryptoKdjEmailToggle = document.getElementById("crypto-kdj-email-toggle");
 const placeholderView = document.getElementById("placeholder-view");
 const placeholderTitle = document.getElementById("placeholder-title");
 const placeholderSubtitle = document.getElementById("placeholder-subtitle");
@@ -1030,10 +1036,39 @@ async function refreshMarketStatus() {
     marketOpen = body.market_open !== false;
     marketReopenTimeSpan.textContent = body.market_data_start_et || "";
     applyMarketBannerVisibility();
+    // Don't stomp on a change the user just made but hasn't finished
+    // submitting yet (see the toggle's own change handler below).
+    if (typeof body.crypto_kdj_email_alerts_enabled === "boolean" && !cryptoKdjEmailToggle.disabled) {
+      cryptoKdjEmailToggle.checked = body.crypto_kdj_email_alerts_enabled;
+    }
   } catch (e) {
     // Transient fetch failure — leave things in whatever state they were.
   }
 }
+
+// "Email Alerts" toggle on the Focus Crypto Analysis page (next to the KDJ
+// Alerts chip strip) — turns the crypto KDJ monitor's email on/off live, no
+// restart needed (see alerts/kdj_monitor.py's load/save_crypto_kdj_email_
+// alerts_enabled and web/app.py's POST /api/crypto-kdj-email-alerts). The
+// on-screen alert chips keep showing regardless of this switch.
+cryptoKdjEmailToggle.addEventListener("change", async () => {
+  const desired = cryptoKdjEmailToggle.checked;
+  cryptoKdjEmailToggle.disabled = true;
+  try {
+    const res = await fetch("/api/crypto-kdj-email-alerts", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({enabled: desired}),
+    });
+    if (!res.ok) throw new Error("Failed to save");
+    const body = await res.json();
+    cryptoKdjEmailToggle.checked = body.enabled;
+  } catch (e) {
+    cryptoKdjEmailToggle.checked = !desired; // revert on failure
+  } finally {
+    cryptoKdjEmailToggle.disabled = false;
+  }
+});
 
 let chartLoadInFlight = false;
 
