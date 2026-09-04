@@ -27,7 +27,6 @@ from data.crypto_info import crypto_display_name, binance_quote_url
 from data.resample import resample_bars, BAR_MINUTES
 from charts.candlestick import build_candlestick_figure
 from indicators.signals import compute_signals, compute_composite_signal
-from backtesting import run_backtest, BacktestError
 from data.company_names import get_company_name
 from data.watchlists import (
     create_watchlist,
@@ -817,72 +816,6 @@ async def get_crypto_chart(
             "composite": composite,
         }
     )
-
-
-@app.get("/api/backtest")
-async def api_backtest(
-    symbol: str, timeframe: str = "5Min", indicators: str = "", limit: int = 500
-) -> JSONResponse:
-    """Runs backtesting.run_backtest() over this symbol's historical bars —
-    see that module's docstring for exactly what strategy it simulates
-    (long/flat, driven by the composite signal) and its limitations (no
-    fees/slippage/position-sizing; not investment advice). `indicators` is
-    a comma-separated list, e.g. 'ema,rsi,macd' — defaults to
-    backtesting.DEFAULT_BACKTEST_INDICATORS if omitted."""
-    symbol = symbol.strip().upper()
-    if not symbol:
-        return JSONResponse({"error": "symbol is required"}, status_code=400)
-
-    try:
-        df = _load_symbol_df(symbol, timeframe, limit)
-    except Exception as exc:  # noqa: BLE001
-        return JSONResponse({"error": str(exc)}, status_code=502)
-    if df.empty:
-        return JSONResponse({"error": "no data available for this symbol yet — check the ticker is correct"}, status_code=404)
-
-    indicator_list = [i.strip() for i in indicators.split(",") if i.strip()] or None
-
-    try:
-        result = await asyncio.to_thread(run_backtest, df, indicator_list)
-    except BacktestError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Backtest failed for %s", symbol)
-        return JSONResponse({"error": f"Backtest failed: {exc}"}, status_code=500)
-
-    return JSONResponse({"symbol": symbol, "timeframe": timeframe, **result})
-
-
-@app.get("/api/crypto-backtest")
-async def api_crypto_backtest(
-    symbol: str, timeframe: str = "30Min", indicators: str = "", limit: int = 500
-) -> JSONResponse:
-    """Crypto counterpart to /api/backtest — same run_backtest() engine,
-    sourced from crypto bars instead of stock bars."""
-    symbol = symbol.strip().upper()
-    if not symbol:
-        return JSONResponse({"error": "symbol is required"}, status_code=400)
-    if "/" not in symbol:
-        return JSONResponse({"error": "symbol must be a pair like BTC/USDT"}, status_code=400)
-
-    try:
-        df = _load_crypto_symbol_df(symbol, timeframe, limit)
-    except Exception as exc:  # noqa: BLE001
-        return JSONResponse({"error": str(exc)}, status_code=502)
-    if df.empty:
-        return JSONResponse({"error": "no data available for this pair yet — check the symbol is correct (e.g. BTC/USDT)"}, status_code=404)
-
-    indicator_list = [i.strip() for i in indicators.split(",") if i.strip()] or None
-
-    try:
-        result = await asyncio.to_thread(run_backtest, df, indicator_list)
-    except BacktestError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Crypto backtest failed for %s", symbol)
-        return JSONResponse({"error": f"Backtest failed: {exc}"}, status_code=500)
-
-    return JSONResponse({"symbol": symbol, "timeframe": timeframe, **result})
 
 
 def _mover_to_dict(row) -> dict:

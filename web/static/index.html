@@ -74,23 +74,6 @@
   .chg-up { color: #16a34a; font-weight: 600; }
   .chg-down { color: #dc2626; font-weight: 600; }
   .trend-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
-  /* Backtest results panel: a dismissible card below the chart, shown on
-     demand when "Run Backtest" is clicked — see backtesting.py for what it
-     simulates (a long/flat strategy driven by the composite signal). */
-  #backtest-panel, #crypto-backtest-panel { margin: 0 20px 20px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px 20px; }
-  #backtest-panel[hidden], #crypto-backtest-panel[hidden] { display: none; }
-  #backtest-header, #crypto-backtest-header { display: flex; align-items: center; justify-content: space-between; }
-  #backtest-header h3, #crypto-backtest-header h3 { margin: 0; font-size: 15px; color: #111827; }
-  #backtest-close-btn, #crypto-backtest-close-btn { border: none; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: #9ca3af; padding: 0 4px; }
-  #backtest-close-btn:hover, #crypto-backtest-close-btn:hover { color: #374151; }
-  #backtest-msg, #crypto-backtest-msg { font-size: 13px; color: #b45309; margin-top: 8px; }
-  #backtest-summary, #crypto-backtest-summary { display: flex; flex-wrap: wrap; gap: 20px; margin: 14px 0; }
-  .backtest-stat { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
-  .backtest-stat-label { font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.03em; }
-  #backtest-trades-wrap, #crypto-backtest-trades-wrap { overflow-x: auto; max-height: 300px; overflow-y: auto; }
-  #backtest-trades-table, #crypto-backtest-trades-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  #backtest-trades-table th, #crypto-backtest-trades-table th { text-align: left; padding: 6px 10px; background: #f3f4f6; color: #374151; border-bottom: 1px solid #e5e7eb; white-space: nowrap; position: sticky; top: 0; }
-  #backtest-trades-table td, #crypto-backtest-trades-table td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
   .halt-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
   .halt-badge.active { background: #fee2e2; color: #b91c1c; }
   .halt-badge.resumed { background: #dcfce7; color: #15803d; }
@@ -160,9 +143,6 @@
       <select id="timeframe"></select>
     </div>
     <div class="indicator-group" id="indicators"></div>
-    <div>
-      <button id="backtest-btn" type="button" title="Simulate a long/flat strategy driven by the composite signal (EMA+RSI+MACD by default) over this symbol's recent history. Not investment advice.">Run Backtest</button>
-    </div>
     <div id="kdj-alerts-wrap">
       <span id="kdj-alerts-label">KDJ Alerts</span>
       <div id="kdj-alerts"></div>
@@ -171,21 +151,6 @@
 
   <div id="msg"></div>
   <div id="chart"></div>
-
-  <div id="backtest-panel" hidden>
-    <div id="backtest-header">
-      <h3>Backtest Results</h3>
-      <button id="backtest-close-btn" type="button" title="Close">&times;</button>
-    </div>
-    <div id="backtest-msg"></div>
-    <div id="backtest-summary"></div>
-    <div id="backtest-trades-wrap">
-      <table id="backtest-trades-table">
-        <thead><tr><th>Entry Time</th><th>Entry $</th><th>Exit Time</th><th>Exit $</th><th>Return %</th></tr></thead>
-        <tbody id="backtest-trades-tbody"></tbody>
-      </table>
-    </div>
-  </div>
 </div>
 
 <div id="crypto-view" style="display:none">
@@ -204,9 +169,6 @@
       <select id="crypto-timeframe"></select>
     </div>
     <div class="indicator-group" id="crypto-indicators"></div>
-    <div>
-      <button id="crypto-backtest-btn" type="button" title="Simulate a long/flat strategy driven by the composite signal (EMA+RSI+MACD by default) over this pair's recent history. Not investment advice.">Run Backtest</button>
-    </div>
     <div id="crypto-kdj-alerts-wrap">
       <span id="crypto-kdj-alerts-label">KDJ Alerts</span>
       <div id="crypto-kdj-alerts"></div>
@@ -218,21 +180,6 @@
 
   <div id="crypto-msg"></div>
   <div id="crypto-chart"></div>
-
-  <div id="crypto-backtest-panel" hidden>
-    <div id="crypto-backtest-header">
-      <h3>Backtest Results</h3>
-      <button id="crypto-backtest-close-btn" type="button" title="Close">&times;</button>
-    </div>
-    <div id="crypto-backtest-msg"></div>
-    <div id="crypto-backtest-summary"></div>
-    <div id="crypto-backtest-trades-wrap">
-      <table id="crypto-backtest-trades-table">
-        <thead><tr><th>Entry Time</th><th>Entry $</th><th>Exit Time</th><th>Exit $</th><th>Return %</th></tr></thead>
-        <tbody id="crypto-backtest-trades-tbody"></tbody>
-      </table>
-    </div>
-  </div>
 </div>
 
 <div id="placeholder-view">
@@ -320,12 +267,6 @@ const loadBtn = document.getElementById("load-btn");
 const timeframeSel = document.getElementById("timeframe");
 const indicatorsDiv = document.getElementById("indicators");
 const kdjAlertsDiv = document.getElementById("kdj-alerts");
-const backtestBtn = document.getElementById("backtest-btn");
-const backtestPanel = document.getElementById("backtest-panel");
-const backtestCloseBtn = document.getElementById("backtest-close-btn");
-const backtestMsg = document.getElementById("backtest-msg");
-const backtestSummary = document.getElementById("backtest-summary");
-const backtestTradesTbody = document.getElementById("backtest-trades-tbody");
 const msgDiv = document.getElementById("msg");
 const wsStatusSpan = document.getElementById("ws-status");
 const statusDot = document.getElementById("status-dot");
@@ -343,12 +284,6 @@ const cryptoLoadBtn = document.getElementById("crypto-load-btn");
 const cryptoTimeframeSel = document.getElementById("crypto-timeframe");
 const cryptoIndicatorsDiv = document.getElementById("crypto-indicators");
 const cryptoMsgDiv = document.getElementById("crypto-msg");
-const cryptoBacktestBtn = document.getElementById("crypto-backtest-btn");
-const cryptoBacktestPanel = document.getElementById("crypto-backtest-panel");
-const cryptoBacktestCloseBtn = document.getElementById("crypto-backtest-close-btn");
-const cryptoBacktestMsg = document.getElementById("crypto-backtest-msg");
-const cryptoBacktestSummary = document.getElementById("crypto-backtest-summary");
-const cryptoBacktestTradesTbody = document.getElementById("crypto-backtest-trades-tbody");
 const cryptoKdjAlertsDiv = document.getElementById("crypto-kdj-alerts");
 const cryptoKdjEmailToggle = document.getElementById("crypto-kdj-email-toggle");
 const placeholderView = document.getElementById("placeholder-view");
@@ -800,9 +735,8 @@ async function loadOptions() {
 }
 
 // --- Focus Crypto Analysis ---
-// A separate, simpler page: same indicator checkboxes and Run Backtest
-// panel as the stock page, driven by /api/crypto-chart and
-// /api/crypto-backtest instead. Deliberately skips the stock page's
+// A separate, simpler page: same indicator checkboxes as the stock page,
+// driven by /api/crypto-chart instead. Deliberately skips the stock page's
 // in-place live-tick title-price update (buildPriceTitle/updateTitlePrice)
 // — a "bars" WebSocket message (see connectWebSocket below) still triggers
 // a full chart reload roughly once per crypto bar close, which is plenty
@@ -882,55 +816,6 @@ async function loadCryptoChart() {
     cryptoChartLoadInFlight = false;
   }
 }
-
-function renderCryptoBacktestResult(data) {
-  const returnClass = data.total_return_pct > 0 ? "chg-up" : data.total_return_pct < 0 ? "chg-down" : "";
-  const winRateText = data.win_rate_pct != null ? `${data.win_rate_pct.toFixed(1)}%` : "—";
-  cryptoBacktestSummary.innerHTML = `
-    <div class="backtest-stat"><span class="backtest-stat-label">Symbol / Interval</span><span>${escapeHtml(data.symbol)} · ${escapeHtml(data.timeframe)}</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Window</span><span>${formatBacktestTs(data.start_time)} → ${formatBacktestTs(data.end_time)} (${data.bars_used} bars)</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Indicators</span><span>SMA + ${data.indicators.map(escapeHtml).join(", ")}</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Total Return</span><span class="${returnClass}">${data.total_return_pct > 0 ? "+" : ""}${data.total_return_pct.toFixed(2)}%</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Final Equity</span><span>$${data.final_equity.toFixed(2)} (from $${data.initial_capital.toFixed(2)})</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Trades / Win Rate</span><span>${data.num_trades} trades, ${winRateText} win rate</span></div>
-  `;
-  cryptoBacktestTradesTbody.innerHTML = data.trades.map((t) => {
-    const cls = t.return_pct > 0 ? "chg-up" : t.return_pct < 0 ? "chg-down" : "";
-    const forcedNote = t.forced ? ' <span title="Position was still open at the end of the window — closed out here just to compute a final result." style="color:#9ca3af">(forced)</span>' : "";
-    return `<tr>
-      <td>${formatBacktestTs(t.entry_time)}</td>
-      <td>$${t.entry_price.toFixed(2)}</td>
-      <td>${formatBacktestTs(t.exit_time)}${forcedNote}</td>
-      <td>$${t.exit_price.toFixed(2)}</td>
-      <td class="${cls}">${t.return_pct > 0 ? "+" : ""}${t.return_pct.toFixed(2)}%</td>
-    </tr>`;
-  }).join("");
-}
-
-async function runCryptoBacktest() {
-  const symbol = currentCryptoSymbol();
-  if (!symbol) return;
-  cryptoBacktestPanel.hidden = false;
-  cryptoBacktestMsg.textContent = "Running backtest…";
-  cryptoBacktestSummary.innerHTML = "";
-  cryptoBacktestTradesTbody.innerHTML = "";
-  try {
-    const timeframe = cryptoTimeframeSel.value || "30Min";
-    const res = await fetch(`/api/crypto-backtest?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`);
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      cryptoBacktestMsg.textContent = data.error || `Backtest failed (HTTP ${res.status})`;
-      return;
-    }
-    cryptoBacktestMsg.textContent = "";
-    renderCryptoBacktestResult(data);
-  } catch (err) {
-    cryptoBacktestMsg.textContent = `Backtest failed: ${err}`;
-  }
-}
-
-cryptoBacktestBtn.addEventListener("click", runCryptoBacktest);
-cryptoBacktestCloseBtn.addEventListener("click", () => { cryptoBacktestPanel.hidden = true; });
 
 cryptoLoadBtn.addEventListener("click", loadCryptoChart);
 cryptoSymbolInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { closeCryptoSymbolDropdown(); loadCryptoChart(); } });
@@ -1250,66 +1135,6 @@ function connectWebSocket() {
     if (cryptoRelevant) loadCryptoChart();
   };
 }
-
-// Backtest panel: simulates a long/flat strategy driven by the composite
-// signal (see backtesting.py) over the currently loaded symbol/timeframe's
-// recent history. Independent of the live chart — it's a one-shot request
-// triggered by the button, not something that re-runs on every tick.
-function formatBacktestTs(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-function renderBacktestResult(data) {
-  const returnClass = data.total_return_pct > 0 ? "chg-up" : data.total_return_pct < 0 ? "chg-down" : "";
-  const winRateText = data.win_rate_pct != null ? `${data.win_rate_pct.toFixed(1)}%` : "—";
-  backtestSummary.innerHTML = `
-    <div class="backtest-stat"><span class="backtest-stat-label">Symbol / Interval</span><span>${escapeHtml(data.symbol)} · ${escapeHtml(data.timeframe)}</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Window</span><span>${formatBacktestTs(data.start_time)} → ${formatBacktestTs(data.end_time)} (${data.bars_used} bars)</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Indicators</span><span>SMA + ${data.indicators.map(escapeHtml).join(", ")}</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Total Return</span><span class="${returnClass}">${data.total_return_pct > 0 ? "+" : ""}${data.total_return_pct.toFixed(2)}%</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Final Equity</span><span>$${data.final_equity.toFixed(2)} (from $${data.initial_capital.toFixed(2)})</span></div>
-    <div class="backtest-stat"><span class="backtest-stat-label">Trades / Win Rate</span><span>${data.num_trades} trades, ${winRateText} win rate</span></div>
-  `;
-  backtestTradesTbody.innerHTML = data.trades.map((t) => {
-    const cls = t.return_pct > 0 ? "chg-up" : t.return_pct < 0 ? "chg-down" : "";
-    const forcedNote = t.forced ? ' <span title="Position was still open at the end of the window — closed out here just to compute a final result." style="color:#9ca3af">(forced)</span>' : "";
-    return `<tr>
-      <td>${formatBacktestTs(t.entry_time)}</td>
-      <td>$${t.entry_price.toFixed(2)}</td>
-      <td>${formatBacktestTs(t.exit_time)}${forcedNote}</td>
-      <td>$${t.exit_price.toFixed(2)}</td>
-      <td class="${cls}">${t.return_pct > 0 ? "+" : ""}${t.return_pct.toFixed(2)}%</td>
-    </tr>`;
-  }).join("");
-}
-
-async function runBacktest() {
-  const symbol = currentSymbol();
-  if (!symbol) return;
-  backtestPanel.hidden = false;
-  backtestMsg.textContent = "Running backtest…";
-  backtestSummary.innerHTML = "";
-  backtestTradesTbody.innerHTML = "";
-  try {
-    const timeframe = timeframeSel.value || "5Min";
-    const res = await fetch(`/api/backtest?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`);
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      backtestMsg.textContent = data.error || `Backtest failed (HTTP ${res.status})`;
-      return;
-    }
-    backtestMsg.textContent = "";
-    renderBacktestResult(data);
-  } catch (err) {
-    backtestMsg.textContent = `Backtest failed: ${err}`;
-  }
-}
-
-backtestBtn.addEventListener("click", runBacktest);
-backtestCloseBtn.addEventListener("click", () => { backtestPanel.hidden = true; });
 
 loadBtn.addEventListener("click", loadChart);
 symbolInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { closeSymbolDropdown(); loadChart(); } });

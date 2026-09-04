@@ -48,21 +48,12 @@ and computes indicators, but never places, modifies, or cancels orders.
   read of a standard rule, not a backtest, and not investment advice
 - Candlestick charts (Plotly) with indicator overlays and oscillator subplots,
   for multiple time intervals (1Min, 5Min, 15Min, 1Hour, 1Day)
-- Backtesting (`backtesting.py`, "Run Backtest" button on the Focus Stock
-  Analysis page, `/api/backtest`): simulates a simple long/flat strategy —
-  go long when the composite signal (SMA + EMA/RSI/MACD by default) turns
-  bullish, go flat when it turns bearish — over the symbol's recent history
-  at whatever interval is currently selected. Reports total return, final
-  equity, win rate, and a full trade log in a dismissible panel below the
-  chart. No fees, slippage, position sizing, or shorting — a lightweight
-  sanity check on how the composite signal has historically leaned for a
-  symbol, not a proper walk-forward backtest, and not investment advice
 - Web GUI (FastAPI + Plotly.js) with live updates over a WebSocket. The chart
   title's price updates continuously from individual trade ticks (not just
   once per minute bar close) — a lightweight in-place title update, not a
   full chart re-render
 - **Focus Crypto Analysis** page: the same candlestick charts, indicators,
-  trend signals, and backtesting as the stock page, for crypto pairs (e.g.
+  and trend signals as the stock page, for crypto pairs (e.g.
   BTC/USDT, ETH/USDT) via Alpaca's separate crypto exchange/data path
   (`data/crypto_historical.py`, `data/crypto_stream.py`,
   `alpaca.data.live.crypto.CryptoDataStream`) — same account credentials,
@@ -230,7 +221,6 @@ alerts/
   email_alert.py          SMTP email sending
   kdj_monitor.py           resample -> KDJ -> cross detection -> alert, on a loop
                             (run as two instances: stock + crypto, see config.py)
-backtesting.py          long/flat strategy simulation driven by the composite signal
 web/
   app.py                 FastAPI app: REST + WebSocket + static GUI
   static/index.html      browser GUI
@@ -251,9 +241,8 @@ composite signal's per-rule correctness and fault-isolation guarantee
 signals already computed for the others), KDJ cross detection and
 monitor-list read/write, the halts screener's direction logic, watchlists
 CRUD round-trips, the rule-based market holiday calendar, `BarStore`
-(bar upsert/prune, KDJ alert record/backfill), the backtesting engine, and
-the crypto display-name/Binance-link helpers plus the chart title's
-quote_url override.
+(bar upsert/prune, KDJ alert record/backfill), and the crypto
+display-name/Binance-link helpers plus the chart title's quote_url override.
 Doesn't cover the FastAPI endpoints themselves end-to-end or the frontend
 JS — those are verified manually (`TestClient` + `node --check` during
 development) rather than as part of this pytest suite.

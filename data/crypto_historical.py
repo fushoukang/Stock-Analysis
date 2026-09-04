@@ -48,8 +48,8 @@ def fetch_crypto_bars(
     """Fetch recent historical bars for a crypto pair (e.g. 'BTC/USDT'),
     returned as an OHLCV DataFrame indexed by UTC timestamp — the exact same
     shape as data/historical.py's fetch_bars(), so every downstream
-    consumer (indicators, the chart builder, the backtester) works
-    unchanged on crypto data without any special-casing."""
+    consumer (indicators, the chart builder) works unchanged on crypto data
+    without any special-casing."""
     if timeframe not in TIMEFRAME_MAP:
         raise ValueError(f"Unknown timeframe '{timeframe}'. Options: {list(TIMEFRAME_MAP)}")
 
