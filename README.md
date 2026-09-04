@@ -92,15 +92,6 @@ and computes indicators, but never places, modifies, or cancels orders.
     email switch off, and the on-screen WebSocket alert keeps firing — only
     the email is silenced. Both instances email the same `ALERT_EMAIL_TO`
     address via the same SMTP credentials
-- KDJ alert history: every cross the monitor detects is persisted to the
-  local SQLite store (`kdj_alerts` table, `BarStore.record_kdj_alert`), not
-  just emailed/pushed live. A background loop (`_kdj_alert_backfill_loop` in
-  `web/app.py`, every 15 minutes) later fills in the price 1 hour and 1 day
-  after each alert, and classifies the move as up/down/flat relative to the
-  price at alert time — a simple outcome read, not a backtest. Browsable via
-  the "KDJ Alert History" category in the header dropdown (`/api/kdj-alerts`,
-  optional `?symbol=`/`?limit=` query params) — "1h Later"/"1d Later" show
-  "pending…" until enough time has passed for that bar to exist
 - Market data window: Alpaca (WebSocket stream, REST catch-up/backfill, and
   company-name lookups) is only ever contacted between `MARKET_DATA_START_ET`
   and `MARKET_DATA_END_ET` (default 6:30 AM - 6:00 PM ET, Mon-Fri — early +

@@ -117,24 +117,6 @@ async def _bar_retention_loop() -> None:
         await asyncio.sleep(_BAR_PRUNE_INTERVAL_SEC)
 
 
-_KDJ_ALERT_BACKFILL_INTERVAL_SEC = 15 * 60  # every 15 minutes
-
-
-async def _kdj_alert_backfill_loop() -> None:
-    """Periodically fills in each KDJ alert's price_1h/price_1d/outcome_1h/
-    outcome_1d once enough wall-clock time has passed (see
-    BarStore.backfill_kdj_alert_outcomes) — lets the KDJ Alert History view
-    show whether price actually moved the direction each past cross
-    implied. Independent of Alpaca credentials: it only reads/writes bars
-    and alerts already sitting in the local SQLite store."""
-    while True:
-        try:
-            await asyncio.to_thread(store.backfill_kdj_alert_outcomes, RAW_TIMEFRAME)
-        except Exception:
-            logger.exception("KDJ alert outcome backfill failed")
-        await asyncio.sleep(_KDJ_ALERT_BACKFILL_INTERVAL_SEC)
-
-
 async def _market_hours_loop(all_symbols: list[str]) -> None:
     """Polls the market data window and reacts to transitions: backfills
     once right when it opens (covering the case where the app was started,
@@ -166,7 +148,6 @@ async def on_startup() -> None:
     # Local DB maintenance, independent of Alpaca credentials — runs
     # regardless of whether the rest of startup bails out below.
     asyncio.create_task(_bar_retention_loop())
-    asyncio.create_task(_kdj_alert_backfill_loop())
 
     if not settings.has_credentials():
         logger.warning(
@@ -931,22 +912,6 @@ async def screener_halts() -> JSONResponse:
             ]
         }
     )
-
-
-@app.get("/api/kdj-alerts")
-async def api_kdj_alerts(symbol: str | None = None, limit: int = 100) -> JSONResponse:
-    """History of past KDJ cross alerts (see alerts/kdj_monitor.py and
-    BarStore.record_kdj_alert/get_kdj_alerts). Independent of Alpaca and
-    the market data window — this just reads the local SQLite store.
-    `price_1h`/`price_1d`/`outcome_1h`/`outcome_1d` are null until
-    _kdj_alert_backfill_loop has had enough elapsed time to fill them in."""
-    limit = max(1, min(limit, 500))
-    try:
-        rows = await asyncio.to_thread(store.get_kdj_alerts, symbol, limit)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to load KDJ alert history")
-        return JSONResponse({"error": f"Failed to load KDJ alert history: {exc}"}, status_code=500)
-    return JSONResponse({"rows": rows})
 
 
 def _watchlist_body_fields(body: dict) -> tuple[str, str, list[str]] | JSONResponse:

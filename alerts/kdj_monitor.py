@@ -236,24 +236,6 @@ class KDJMonitor:
         )
         logger.info("KDJ cross detected: %s", subject)
 
-        # Persist the alert so the GUI's "KDJ Alert History" view has a
-        # record of it, and so backfill_kdj_alert_outcomes() can later fill
-        # in how price actually moved 1h/1d afterwards. Best-effort: a
-        # storage failure here must never stop the email/on-screen alert
-        # from going out.
-        try:
-            raw_last_close = float(df["close"].iloc[-1])
-            self.store.record_kdj_alert(
-                symbol=symbol,
-                direction=direction,
-                k=k, d=d, j=j,
-                timeframe=MONITOR_TIMEFRAME,
-                bar_time=last_ts,
-                price_at_alert=raw_last_close,
-            )
-        except Exception:
-            logger.warning("Failed to persist KDJ alert history for %s", symbol, exc_info=True)
-
         if self.email_alerts_enabled():
             await asyncio.to_thread(send_email_alert, subject, body)
         else:

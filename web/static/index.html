@@ -122,7 +122,6 @@
     <option value="52w-high">52 Week High Stocks</option>
     <option value="52w-low">52 Week Low Stocks</option>
     <option value="halts">Current Market Halt Stocks</option>
-    <option value="kdj-history">KDJ Alert History</option>
     <option value="watchlists">Watchlists</option>
   </select>
 </header>
@@ -326,19 +325,16 @@ const CATEGORY_LABELS = {
   "52w-high": "52 Week High Stocks",
   "52w-low": "52 Week Low Stocks",
   "halts": "Current Market Halt Stocks",
-  "kdj-history": "KDJ Alert History",
 };
 const CATEGORY_SUBTITLES = {
   "52w-high": "Market cap > $1B. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
   "52w-low": "Market cap > $100M. Source: TradingView market movers. Not the full universe — TradingView's default view returns a capped, alphabetically-sorted subset.",
   "halts": "Today's LULD (Limit Up-Limit Down) volatility halts only, most recent first (up to 10) — news, regulatory, ETF, and market-wide halts are excluded. Source: Nasdaq Trade Halt feed. Price via Alpaca — only available during the app's market data hours (6:30 AM–6 PM ET). Direction (▲/▼) compares the halt's pause threshold price to the prior close.",
-  "kdj-history": "Past KDJ (15Min) K/D crosses detected by the monitor watching monitor_list.txt, most recent first. \"1h Later\" / \"1d Later\" show price and outcome once enough time has passed for that bar to exist — a simple up/down/flat read, not a backtest or investment advice.",
 };
 const CATEGORY_ENDPOINTS = {
   "52w-high": "/api/screener/52w-high",
   "52w-low": "/api/screener/52w-low",
   "halts": "/api/screener/halts",
-  "kdj-history": "/api/kdj-alerts",
 };
 
 function escapeHtml(s) {
@@ -395,42 +391,6 @@ function renderHaltsTable(rows) {
       <td>${escapeHtml(r.halt_time)}</td>
       <td>${escapeHtml(r.market)}</td>
       <td>${badge}</td>
-    </tr>`;
-  }).join("");
-}
-
-function formatTs(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-US", {
-    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-  });
-}
-
-function outcomeCell(price, outcome) {
-  if (price == null || outcome == null) return '<span style="color:#9ca3af">pending…</span>';
-  const cls = outcome === "up" ? "chg-up" : outcome === "down" ? "chg-down" : "";
-  const arrow = outcome === "up" ? "▲" : outcome === "down" ? "▼" : "→";
-  return `<span class="${cls}">${arrow} $${Number(price).toFixed(2)}</span>`;
-}
-
-function renderKdjHistoryTable(rows) {
-  screenerThead.innerHTML = "<tr><th>Symbol</th><th>Direction</th><th>K</th><th>D</th><th>J</th><th>Bar Time</th><th>Price At Alert</th><th>1h Later</th><th>1d Later</th></tr>";
-  screenerTbody.innerHTML = rows.map((r) => {
-    const dirBadge = r.direction === "up"
-      ? '<span class="chg-up">▲ K crossed up</span>'
-      : '<span class="chg-down">▼ K crossed down</span>';
-    return `<tr>
-      <td>${escapeHtml(r.symbol)}</td>
-      <td>${dirBadge}</td>
-      <td>${r.k != null ? r.k.toFixed(2) : "—"}</td>
-      <td>${r.d != null ? r.d.toFixed(2) : "—"}</td>
-      <td>${r.j != null ? r.j.toFixed(2) : "—"}</td>
-      <td>${formatTs(r.bar_time)}</td>
-      <td>${r.price_at_alert != null ? "$" + Number(r.price_at_alert).toFixed(2) : "—"}</td>
-      <td>${outcomeCell(r.price_1h, r.outcome_1h)}</td>
-      <td>${outcomeCell(r.price_1d, r.outcome_1d)}</td>
     </tr>`;
   }).join("");
 }
@@ -652,8 +612,6 @@ async function loadScreener(value) {
     screenerMsg.textContent = "";
     if (value === "halts") {
       renderHaltsTable(rows);
-    } else if (value === "kdj-history") {
-      renderKdjHistoryTable(rows);
     } else {
       renderMoversTable(rows);
     }
