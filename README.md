@@ -4,16 +4,8 @@ Real-time stock and crypto data streaming and technical analysis on top of
 Alpaca's Trading/Market Data API, with a web GUI for candlestick charts and
 indicators.
 
-This app is **read-only market data analysis** — it streams and stores bars
-and computes indicators, but never places, modifies, or cancels orders.
-
 ## Features
 
-- Version number: `pyproject.toml`'s `version` field is the single source
-  of truth — shown next to the title in the GUI header (`vX.Y.Z`, via
-  `/api/status`'s `app_version`, read by `config.py`'s
-  `_read_pyproject_version()`). Bump the app's version by editing that one
-  line; nothing else needs to change
 - Real-time bar + trade streaming via Alpaca's WebSocket (`alpaca.data.live.StockDataStream`)
 - Historical backfill via Alpaca's REST market data API
 - Local SQLite storage of OHLCV bars, with a background job (every 6 hours)
@@ -174,14 +166,24 @@ python main.py
 
 By default `HOST=auto` in `.env`, so the server detects this machine's LAN
 IPv4 address at startup and binds to it — the GUI is reachable from other
-devices on your network without hardcoding an address. The actual address is
-printed to your terminal by uvicorn when it starts (`Uvicorn running on
-http://...`); set `HOST` to a specific value (e.g. `127.0.0.1` for
-local-only access) to override auto-detection.
+devices on your network without hardcoding an address. Because uvicorn
+binds to that specific LAN IP rather than to all interfaces, **`http://localhost:8000`
+will not work with the default settings** — `localhost`/`127.0.0.1` is a
+different interface from the LAN IP the server actually bound to, so the
+connection is refused.
 
-Then open http://localhost:8000 in a browser. On startup the app backfills
-recent history for each watchlist symbol, connects the live stream, and
-begins pushing updates to any open browser tabs.
+Open the address uvicorn prints to your terminal at startup instead
+(`Uvicorn running on http://<LAN-IP>:8000`) — e.g. `http://192.168.1.23:8000`.
+That same address also works from other devices on your network.
+
+If you only need local access and want `http://localhost:8000` to work, set
+`HOST=127.0.0.1` in `.env` (overriding auto-detection) and restart the app;
+with that setting the server binds to the loopback interface and
+`http://localhost:8000` — or `http://127.0.0.1:8000` — will work.
+
+On startup the app backfills recent history for each watchlist symbol,
+connects the live stream, and begins pushing updates to any open browser
+tabs.
 
 ## Project layout
 
