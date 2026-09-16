@@ -176,11 +176,6 @@ Open the address uvicorn prints to your terminal at startup instead
 (`Uvicorn running on http://<LAN-IP>:8000`) — e.g. `http://192.168.1.23:8000`.
 That same address also works from other devices on your network.
 
-If you only need local access and want `http://localhost:8000` to work, set
-`HOST=127.0.0.1` in `.env` (overriding auto-detection) and restart the app;
-with that setting the server binds to the loopback interface and
-`http://localhost:8000` — or `http://127.0.0.1:8000` — will work.
-
 On startup the app backfills recent history for each watchlist symbol,
 connects the live stream, and begins pushing updates to any open browser
 tabs.
