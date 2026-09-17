@@ -1,4 +1,4 @@
-# Stock Trading Analysis
+# Stock Analysis
 
 Real-time stock and crypto data streaming and technical analysis on top of
 Alpaca's Trading/Market Data API, with a web GUI for candlestick charts and
@@ -158,6 +158,73 @@ indicators.
    to turn either monitor's emails off independently, without touching SMTP
    credentials or stopping either monitor.
 
+5. Set up login accounts. The web GUI is gated behind named (email +
+   password) accounts — every page, every `/api/*` route, and the live
+   WebSocket all require one, since `HOST=auto` (below) means the GUI is
+   reachable by anything on your LAN by default. There are two ways to get
+   an account:
+
+   - **Create your own directly** (no email round trip):
+     ```
+     python manage_users.py add <your-email> [--group <label>]
+     ```
+     You'll be prompted for a password (typed twice, not echoed); the
+     account is immediately usable. `--group` is an optional bookkeeping
+     label (see below) — omit it if you don't need one.
+     `python manage_users.py list/passwd/remove` manage accounts anytime.
+
+   - **Let people self-register** at `/signup` with their email + a
+     password + a shared registration code you give out. Set
+     `REGISTRATION_CODE` in `.env` to any secret string to turn this on.
+     Signing up sends a "click this link to verify your email" message
+     using the SMTP credentials configured for KDJ alerts above (step 4) — so
+     `SMTP_HOST`/`SMTP_USERNAME`/`SMTP_PASSWORD` must also be set, or
+     `/signup` stays disabled and says so. A new account can't sign in
+     until that link is clicked; an expired/lost link can be re-sent from
+     the "incorrect email or password" screen's "Resend verification
+     email" button. `VERIFICATION_TOKEN_MAX_AGE_HOURS` (default 24)
+     controls how long that link stays valid.
+
+     **Different codes for different groups:** instead of (or alongside)
+     the single `REGISTRATION_CODE`, set any number of
+     `REGISTRATION_CODE_<GROUP>` vars in `.env` — e.g.
+     `REGISTRATION_CODE_FAMILY=...` and `REGISTRATION_CODE_FRIENDS=...`.
+     Whoever signs up with a given code gets tagged with that group
+     (upper-cased) purely as a label for your own bookkeeping — everyone
+     ends up with identical access to the app either way. See who signed
+     up under which group with `python manage_users.py list`.
+
+   **Forgot password:** anyone with an account can click "Forgot
+   password?" on the sign-in page, enter their email, and get a "set a
+   new password" link — no admin involvement needed. Requires SMTP to be
+   configured (same credentials as signup/KDJ alerts); if it isn't, the
+   page says so and points at `python manage_users.py passwd <email>`
+   instead. The link is single-purpose and expires quickly —
+   `RESET_TOKEN_MAX_AGE_HOURS` (default 1) controls how long. Using a
+   reset link also verifies the account, same as clicking a signup
+   verification link, since it proves the same thing (control of the
+   mailbox).
+
+   Until at least one account exists (or signup is turned on), the app
+   stays locked — there's no unauthenticated fallback. Also set
+   `SESSION_SECRET_KEY` (a fresh one is generated in your `.env` for you
+   already — see `web/auth.py`) so logins and any pending verification
+   links survive a restart instead of resetting each time;
+   `SESSION_MAX_AGE_HOURS` (default 168 = 7 days) controls how long a
+   login lasts before signing in again.
+
+   **Managing accounts from the browser:** set `ADMIN_EMAILS` (comma-
+   separated) in `.env` to let those specific account(s) reach
+   `/admin/users` from the GUI — a "Manage accounts" link appears in the
+   header once signed in as one of them. It lists every account (email,
+   verified status, group, signup date) with a Delete button per row
+   (behind a confirmation page). Everyone else who's logged in gets a 403
+   if they try to visit it directly. You can't delete your own account
+   from this page (to avoid an accidental lockout) — use
+   `python manage_users.py remove <email>` for that. This is purely an
+   in-browser alternative to `manage_users.py list/remove`, not a
+   replacement — the CLI still works the same as before.
+
 ## Run
 
 ```
@@ -178,7 +245,10 @@ That same address also works from other devices on your network.
 
 On startup the app backfills recent history for each watchlist symbol,
 connects the live stream, and begins pushing updates to any open browser
-tabs.
+tabs. The first thing you'll see is a login page — sign in with an account
+from Setup step 5 (or follow its "Sign up" link if you turned on
+self-registration); the header shows who's signed in, with a "Logout" link,
+once you're in.
 
 ## Project layout
 
@@ -191,6 +261,7 @@ data/
   crypto_historical.py  Alpaca historical bar fetch (crypto)
   crypto_stream.py       Alpaca live WebSocket stream (crypto) -> store + broadcast queue
   crypto_info.py          crypto display-name lookup + Binance quote link
+  users.py                login accounts (salted PBKDF2 hashes) -> users.json
 indicators/
   moving_average.py     SMA, EMA, MA
   bollinger.py           Bollinger Bands
@@ -211,8 +282,10 @@ alerts/
                             (run as two instances: stock + crypto, see config.py)
 web/
   app.py                 FastAPI app: REST + WebSocket + static GUI
+  auth.py                 login/session-cookie auth (see Setup step 5)
   static/index.html      browser GUI
 main.py                 entry point (uvicorn)
+manage_users.py         CLI to add/remove/list login accounts (see Setup step 5)
 monitor_list.txt        symbols the KDJ monitor watches
 ```
 

@@ -2,12 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Stock Trading Analysis</title>
+<title>Stock Analysis</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f7f8fa; color: #1a1a1a; }
   header { background: #111827; color: white; padding: 14px 20px; display: flex; align-items: center; gap: 16px; }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  #current-user { margin-left: auto; color: #9ca3af; font-size: 12px; }
+  #logout-link, #admin-users-link { color: #9ca3af; font-size: 12px; text-decoration: none; padding: 4px 8px; border: 1px solid #374151; border-radius: 4px; }
+  #logout-link:hover, #admin-users-link:hover { color: white; border-color: #6b7280; }
+  #admin-users-link { display: none; }
   #app-version { font-size: 12px; font-weight: 400; color: #9ca3af; }
   #status-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; display: inline-block; margin-right: 6px; }
   #status-dot.live { background: #22c55e; }
@@ -113,7 +117,7 @@
 </head>
 <body>
 <header>
-  <h1>Stock Trading Analysis <span id="app-version" title="From pyproject.toml"></span></h1>
+  <h1>Stock Analysis <span id="app-version" title="From pyproject.toml"></span></h1>
   <span id="ws-status"><span id="status-dot"></span><span id="status-text">connecting…</span></span>
   <span id="market-closed-banner">The market has closed. Live data resumes at <span id="market-reopen-time"></span> ET.</span>
   <select id="category-select">
@@ -124,6 +128,9 @@
     <option value="halts">Current Market Halt Stocks</option>
     <option value="watchlists">Watchlists</option>
   </select>
+  <span id="current-user"></span>
+  <a id="admin-users-link" href="/admin/users">Manage accounts</a>
+  <a id="logout-link" href="/logout">Logout</a>
 </header>
 
 <div id="focus-view">
@@ -271,6 +278,8 @@ const wsStatusSpan = document.getElementById("ws-status");
 const statusDot = document.getElementById("status-dot");
 const statusText = document.getElementById("status-text");
 const appVersionSpan = document.getElementById("app-version");
+const currentUserSpan = document.getElementById("current-user");
+const adminUsersLink = document.getElementById("admin-users-link");
 const marketClosedBanner = document.getElementById("market-closed-banner");
 const marketReopenTimeSpan = document.getElementById("market-reopen-time");
 const categorySelect = document.getElementById("category-select");
@@ -879,6 +888,8 @@ async function refreshMarketStatus() {
     const res = await fetch("/api/status");
     const body = await res.json();
     if (body.app_version) appVersionSpan.textContent = `(v${body.app_version})`;
+    if (body.current_user) currentUserSpan.textContent = `Signed in as ${body.current_user}`;
+    adminUsersLink.style.display = body.is_admin ? "" : "none";
     marketOpen = body.market_open !== false;
     marketReopenTimeSpan.textContent = body.market_data_start_et || "";
     applyMarketBannerVisibility();
@@ -1057,7 +1068,13 @@ function connectWebSocket() {
     statusDot.className = "live";
     statusText.textContent = "live";
   };
-  ws.onclose = () => {
+  ws.onclose = (evt) => {
+    if (evt.code === 4401) {
+      // Session expired/invalid — retrying would just loop forever getting
+      // the same close code, so send the browser to sign in again instead.
+      location.href = "/login?next=" + encodeURIComponent(location.pathname);
+      return;
+    }
     statusDot.className = "off";
     statusText.textContent = "disconnected — retrying…";
     setTimeout(connectWebSocket, 3000);

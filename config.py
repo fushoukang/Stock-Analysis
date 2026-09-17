@@ -92,6 +92,16 @@ def _list_env(name: str, default: list[str]) -> list[str]:
     return [s.strip().upper() for s in val.split(",") if s.strip()]
 
 
+def _email_list_env(name: str) -> list[str]:
+    """Like _list_env, but lowercased (emails, not tickers) and with an
+    empty-list default rather than a caller-supplied one — an unset admin
+    list should mean "no admins", never a fallback list of real emails."""
+    val = os.getenv(name)
+    if not val:
+        return []
+    return [s.strip().lower() for s in val.split(",") if s.strip()]
+
+
 def _time_env(name: str, default: str) -> dt_time:
     val = (os.getenv(name) or default).strip()
     hour, minute = val.split(":")
@@ -234,11 +244,95 @@ class Settings:
         default_factory=lambda: _time_env("MARKET_DATA_END_ET", "18:00")
     )
 
+    # --- Web GUI authentication ---
+    # Named accounts (email + password), not a single shared login, gate the
+    # entire web GUI — every page, API route, and the /ws WebSocket. Accounts
+    # live in a JSON file (see data/users.py): either self-registered via the
+    # public /signup page (gated by REGISTRATION_CODE + a required email
+    # verification link, see web/app.py) or created directly by you with
+    # `python manage_users.py add <email>` (pre-verified, no email round trip
+    # needed since you already trust yourself). This only points at where
+    # that accounts file lives.
+    users_path: str = field(default_factory=lambda: os.getenv("USERS_PATH", "users.json"))
+    # Shared secret the public /signup form must match to register a new
+    # account — without this, anyone who can reach the app on your LAN could
+    # create their own login. Leaving it unset (and no REGISTRATION_CODE_*
+    # vars set either — see registration_codes() below) disables
+    # self-service signup entirely (fails closed): the /signup page stays
+    # up but can't succeed, same "not configured" treatment as a missing
+    # SMTP/Alpaca credential elsewhere in this file. Accounts you create
+    # yourself via manage_users.py are unaffected either way. This is the
+    # single default code (group "general"); to hand out different codes
+    # to different groups of people, add REGISTRATION_CODE_<GROUP> vars
+    # instead of/alongside this one — see registration_codes().
+    registration_code: str = field(default_factory=lambda: os.getenv("REGISTRATION_CODE", ""))
+    # Signs/verifies both the session cookie and the email-verification link
+    # (see web/auth.py). Optional: if left unset, web/auth.py generates a
+    # random key at process startup instead — sessions (and any verification
+    # link already sent) just won't survive a restart. Set this in .env for
+    # sessions/links that persist across restarts (a random `python -c
+    # "import secrets; print(secrets.token_hex(32))"` works well).
+    session_secret_key: str = field(default_factory=lambda: os.getenv("SESSION_SECRET_KEY", ""))
+    # How long a login stays valid before the browser has to sign in again.
+    session_max_age_hours: int = field(
+        default_factory=lambda: int(os.getenv("SESSION_MAX_AGE_HOURS", "168"))  # 7 days
+    )
+    # How long a just-signed-up account's "click to verify your email" link
+    # stays valid before they'd need to sign up again (there's no resend for
+    # an expired link, only for one that hasn't expired yet — see /verify).
+    verification_token_max_age_hours: int = field(
+        default_factory=lambda: int(os.getenv("VERIFICATION_TOKEN_MAX_AGE_HOURS", "24"))
+    )
+    # How long a "reset your password" email link stays valid. Shorter
+    # than verification_token_max_age_hours by design — a password-reset
+    # link hands over the account (not just proof of a mailbox you already
+    # control), so a tighter window is worth the extra "request a new one"
+    # friction if it expires.
+    reset_token_max_age_hours: int = field(
+        default_factory=lambda: int(os.getenv("RESET_TOKEN_MAX_AGE_HOURS", "1"))
+    )
+    # Comma-separated emails allowed to reach the /admin/users page (view
+    # every account, delete one). Everyone else gets a 403 there even
+    # though they're logged in — being able to sign in at all doesn't
+    # imply being able to manage other people's accounts. Empty by
+    # default: nobody can reach /admin/users until this is set.
+    admin_emails: list[str] = field(default_factory=lambda: _email_list_env("ADMIN_EMAILS"))
+
     def has_credentials(self) -> bool:
         return bool(self.api_key and self.secret_key)
 
     def has_smtp_credentials(self) -> bool:
         return bool(self.smtp_host and self.smtp_username and self.smtp_password)
+
+    def has_registration_code(self) -> bool:
+        return bool(self.registration_codes())
+
+    def is_admin(self, email: str) -> bool:
+        return email.strip().lower() in self.admin_emails
+
+    def registration_codes(self) -> dict[str, str]:
+        """Group name -> registration code that unlocks /signup for that
+        group. Includes the legacy single REGISTRATION_CODE (if set) under
+        the group name "GENERAL", plus any REGISTRATION_CODE_<GROUP> env
+        vars (e.g. REGISTRATION_CODE_FAMILY -> group "FAMILY") — so
+        different groups of people can be handed different codes while
+        everyone still ends up with identical in-app access once signed
+        up; the group is just a label (stored upper-cased) on the account
+        for your own record-keeping (see data/users.py,
+        `python manage_users.py list`). Re-reads os.environ on every call
+        rather than being a fixed dataclass field, since the set of
+        groups is open-ended — same reasoning as the other _env helpers
+        above, just scanning a prefix instead of one fixed name."""
+        codes: dict[str, str] = {}
+        if self.registration_code:
+            codes["GENERAL"] = self.registration_code
+        for key, value in os.environ.items():
+            if not value:
+                continue
+            m = re.match(r"^REGISTRATION_CODE_([A-Za-z0-9][A-Za-z0-9_-]*)$", key)
+            if m:
+                codes[m.group(1).upper()] = value
+        return codes
 
     def data_feed_enum(self) -> DataFeed:
         try:

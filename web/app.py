@@ -8,16 +8,23 @@ cancels orders — there is intentionally no trading endpoint.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import settings, is_within_market_data_window
+from data import users as user_store
+from alerts.email_alert import send_email_alert
+from web import auth
 from data.store import BarStore
 from data.historical import fetch_bars, fetch_latest_prices, fetch_previous_closes, TIMEFRAME_MAP
 from data.stream import LiveStreamManager, RAW_TIMEFRAME
@@ -57,8 +64,356 @@ logger = logging.getLogger("web.app")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Stock Trading Analysis")
+app = FastAPI(title="Stock Analysis")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# --- Authentication ---
+# Named accounts (email + password) gate the whole app — see web/auth.py
+# for the token-signing/rate-limiting details and data/users.py for the
+# account store. Everything except the routes below requires a valid
+# session; unauthenticated browser navigation to "/" gets redirected to the
+# login page, while unauthenticated API calls get a plain 401 (so fetch()
+# callers see a clean failure instead of following a redirect into an HTML
+# page).
+_LOGIN_EXEMPT_PATHS = {"/login", "/signup", "/verify", "/resend-verification", "/forgot-password", "/reset-password"}
+# Any path under here also requires auth.is_admin (ADMIN_EMAILS in .env),
+# on top of plain login — see require_login below and web/auth.py's
+# render_forbidden_page for the logged-in-but-not-admin case.
+_ADMIN_PATH_PREFIX = "/admin"
+# Paths a browser navigates directly to (as opposed to fetch()/WebSocket
+# calls from the GUI's own JS) — an unauthenticated visit here redirects to
+# /login instead of returning a bare 401 JSON body.
+_BROWSER_NAV_PATHS = {"/"}
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if path in _LOGIN_EXEMPT_PATHS:
+        return await call_next(request)
+    is_admin_path = path.startswith(_ADMIN_PATH_PREFIX)
+    if not auth.is_authenticated(request):
+        if path in _BROWSER_NAV_PATHS or is_admin_path:
+            next_qs = quote(path, safe="")
+            return RedirectResponse(url=f"/login?next={next_qs}", status_code=303)
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if is_admin_path and not auth.is_admin(request):
+        return HTMLResponse(auth.render_forbidden_page(), status_code=403)
+    return await call_next(request)
+
+
+@app.get("/login")
+async def login_page(next: str = "/") -> HTMLResponse:
+    return HTMLResponse(auth.render_login_page(next_path=next))
+
+
+@app.post("/login")
+async def login_submit(request: Request) -> Response:
+    ip = _client_ip(request)
+    rate_key = f"login:{ip}"
+    if auth.is_rate_limited(rate_key):
+        return HTMLResponse(
+            auth.render_login_page(error="Too many attempts — try again in a minute."),
+            status_code=429,
+        )
+
+    form = await request.form()
+    email = str(form.get("email", ""))
+    password = str(form.get("password", ""))
+    next_path = str(form.get("next", "/"))
+    if not auth.is_safe_redirect_path(next_path):
+        next_path = "/"
+
+    verified_email = auth.check_credentials(email, password)
+    if verified_email is None:
+        auth.record_failed_attempt(rate_key)
+        return HTMLResponse(
+            auth.render_login_page(error="Incorrect email or password.", next_path=next_path),
+            status_code=401,
+        )
+
+    if not user_store.is_verified(verified_email):
+        # Right password, but the signup email verification link was never
+        # clicked (or expired) — a different message + a way to get a new
+        # link, rather than the generic "incorrect" error above.
+        return HTMLResponse(
+            auth.render_login_page(
+                error="Please verify your email before signing in.",
+                next_path=next_path,
+                show_resend=True,
+                resend_email=verified_email,
+            ),
+            status_code=403,
+        )
+
+    auth.reset_attempts(rate_key)
+    response = RedirectResponse(url=next_path, status_code=303)
+    response.set_cookie(
+        auth.SESSION_COOKIE_NAME,
+        auth.create_session_token(verified_email),
+        max_age=settings.session_max_age_hours * 3600,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+@app.get("/logout")
+@app.post("/logout")
+async def logout() -> RedirectResponse:
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(auth.SESSION_COOKIE_NAME)
+    return response
+
+
+@app.get("/signup")
+async def signup_page() -> HTMLResponse:
+    return HTMLResponse(auth.render_signup_page())
+
+
+@app.post("/signup")
+async def signup_submit(request: Request) -> Response:
+    ip = _client_ip(request)
+    rate_key = f"signup:{ip}"
+    if auth.is_rate_limited(rate_key):
+        return HTMLResponse(
+            auth.render_signup_page(error="Too many attempts — try again in a minute."),
+            status_code=429,
+        )
+
+    if not auth.registration_open():
+        return HTMLResponse(auth.render_signup_page(), status_code=503)
+
+    form = await request.form()
+    email = str(form.get("email", ""))
+    password = str(form.get("password", ""))
+    confirm_password = str(form.get("confirm_password", ""))
+    registration_code = str(form.get("registration_code", ""))
+
+    def _fail(message: str) -> HTMLResponse:
+        auth.record_failed_attempt(rate_key)
+        return HTMLResponse(auth.render_signup_page(error=message, email_value=email), status_code=400)
+
+    group = auth.group_for_code(registration_code)
+    if group is None:
+        return _fail("Incorrect registration code.")
+    if not user_store.looks_like_email(email):
+        return _fail("That doesn't look like a valid email address.")
+    if len(password) < 8:
+        return _fail("Password must be at least 8 characters.")
+    if password != confirm_password:
+        return _fail("Passwords didn't match.")
+
+    try:
+        user = user_store.add_user(email, password, verified=False, group=group)
+    except ValueError as exc:
+        return _fail(str(exc))
+
+    auth.reset_attempts(rate_key)
+    verify_url = str(request.base_url).rstrip("/") + f"/verify?token={quote(auth.create_verification_token(user.email))}"
+    subject, body = auth.verification_email_content(verify_url)
+    if not send_email_alert(subject, body, to_address=user.email):
+        logger.error("Failed to send verification email to %s — account created but unusable until this is resolved.", user.email)
+
+    return HTMLResponse(auth.render_signup_sent_page(user.email))
+
+
+@app.get("/verify")
+async def verify_email(token: str = "") -> HTMLResponse:
+    email = auth.verify_verification_token(token)
+    success = email is not None and user_store.mark_verified(email)
+    return HTMLResponse(auth.render_verify_result_page(success=success))
+
+
+@app.post("/resend-verification")
+async def resend_verification(request: Request) -> HTMLResponse:
+    ip = _client_ip(request)
+    rate_key = f"resend:{ip}"
+    # Always show the same generic confirmation regardless of what actually
+    # happened, so this endpoint can't be used to probe which emails have
+    # an account here.
+    generic = auth.render_login_page(
+        info="If that email has an unverified account, we've sent a new verification link."
+    )
+    if auth.is_rate_limited(rate_key):
+        return HTMLResponse(generic, status_code=429)
+    auth.record_failed_attempt(rate_key)  # counts the request itself, win or lose — caps resend volume either way
+
+    form = await request.form()
+    email = user_store.normalize_email(str(form.get("email", "")))
+    if user_store.user_exists(email) and not user_store.is_verified(email) and settings.has_smtp_credentials():
+        verify_url = str(request.base_url).rstrip("/") + f"/verify?token={quote(auth.create_verification_token(email))}"
+        subject, body = auth.verification_email_content(verify_url)
+        send_email_alert(subject, body, to_address=email)
+
+    return HTMLResponse(generic)
+
+
+# --- Forgot / reset password ---
+@app.get("/forgot-password")
+async def forgot_password_page() -> HTMLResponse:
+    return HTMLResponse(auth.render_forgot_password_page())
+
+
+@app.post("/forgot-password")
+async def forgot_password_submit(request: Request) -> Response:
+    ip = _client_ip(request)
+    rate_key = f"forgot-password:{ip}"
+    # Always the same generic confirmation regardless of what actually
+    # happened — same anti-enumeration reasoning as /resend-verification.
+    generic = auth.render_forgot_password_sent_page()
+    if auth.is_rate_limited(rate_key):
+        return HTMLResponse(generic, status_code=429)
+    auth.record_failed_attempt(rate_key)  # counts the request itself, win or lose — caps volume either way
+
+    if not settings.has_smtp_credentials():
+        return HTMLResponse(auth.render_forgot_password_page(), status_code=503)
+
+    form = await request.form()
+    email = user_store.normalize_email(str(form.get("email", "")))
+    if user_store.user_exists(email):
+        reset_url = str(request.base_url).rstrip("/") + f"/reset-password?token={quote(auth.create_reset_token(email))}"
+        subject, body = auth.reset_password_email_content(reset_url)
+        send_email_alert(subject, body, to_address=email)
+
+    return HTMLResponse(generic)
+
+
+@app.get("/reset-password")
+async def reset_password_page(token: str = "") -> HTMLResponse:
+    if auth.verify_reset_token(token) is None:
+        return HTMLResponse(auth.render_reset_password_invalid_page())
+    return HTMLResponse(auth.render_reset_password_page(token))
+
+
+@app.post("/reset-password")
+async def reset_password_submit(request: Request) -> Response:
+    ip = _client_ip(request)
+    rate_key = f"reset-password:{ip}"
+    if auth.is_rate_limited(rate_key):
+        return HTMLResponse(auth.render_reset_password_invalid_page(), status_code=429)
+
+    form = await request.form()
+    token = str(form.get("token", ""))
+    password = str(form.get("password", ""))
+    confirm_password = str(form.get("confirm_password", ""))
+
+    email = auth.verify_reset_token(token)
+    if email is None:
+        # Only an invalid/expired token counts against the rate limit —
+        # a legitimate retry after a typo'd confirmation shouldn't.
+        auth.record_failed_attempt(rate_key)
+        return HTMLResponse(auth.render_reset_password_invalid_page(), status_code=400)
+
+    if len(password) < 8:
+        return HTMLResponse(auth.render_reset_password_page(token, error="Password must be at least 8 characters."), status_code=400)
+    if password != confirm_password:
+        return HTMLResponse(auth.render_reset_password_page(token, error="Passwords didn't match."), status_code=400)
+
+    user_store.set_password(email, password)
+    # Clicking a reset link proves control of the mailbox just as much as
+    # clicking a verification link does — no reason to leave the account
+    # stuck unverified after a successful reset.
+    user_store.mark_verified(email)
+    auth.reset_attempts(rate_key)
+    logger.info("Password reset for %s", email)
+    return HTMLResponse(auth.render_reset_password_success_page())
+
+
+# --- Admin: view/delete accounts (gated by require_login above on top of
+# auth.is_admin — see ADMIN_EMAILS in .env / config.py) ---
+_ADMIN_SORT_FIELDS = {"email", "status", "group", "created"}
+
+
+def _clean_sort_params(sort: str, dir: str) -> tuple[str, str]:
+    sort = sort if sort in _ADMIN_SORT_FIELDS else "email"
+    dir = dir if dir in ("asc", "desc") else "asc"
+    return sort, dir
+
+
+@app.get("/admin/users")
+async def admin_users_page(request: Request, deleted: str = "", sort: str = "email", dir: str = "asc") -> HTMLResponse:
+    sort, dir = _clean_sort_params(sort, dir)
+    return HTMLResponse(
+        auth.render_admin_users_page(
+            user_store.list_users(),
+            current_email=auth.get_current_email(request),
+            deleted=deleted,
+            sort=sort,
+            sort_dir=dir,
+        )
+    )
+
+
+@app.get("/admin/users/export.csv")
+async def admin_users_export_csv(request: Request) -> Response:
+    # Email/verified/group/created_at only — never salt_hex/hash_hex, even
+    # though they're just a PBKDF2 hash and not the password itself; no
+    # reason for a downloaded file to carry them at all.
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["email", "verified", "group", "created_at"])
+    for u in sorted(user_store.list_users(), key=lambda a: a.email):
+        writer.writerow([u.email, u.verified, u.group, u.created_at])
+
+    current_email = auth.get_current_email(request)
+    logger.info("Admin %s exported the users list to CSV", current_email)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="users-{stamp}.csv"'},
+    )
+
+
+@app.get("/admin/users/delete")
+async def admin_users_delete_confirm(email: str = "", sort: str = "email", dir: str = "asc") -> HTMLResponse:
+    sort, dir = _clean_sort_params(sort, dir)
+    return HTMLResponse(auth.render_admin_delete_confirm_page(email, sort=sort, sort_dir=dir))
+
+
+@app.post("/admin/users/delete")
+async def admin_users_delete_submit(request: Request) -> Response:
+    form = await request.form()
+    target_email = user_store.normalize_email(str(form.get("email", "")))
+    current_email = auth.get_current_email(request)
+    sort, dir = _clean_sort_params(str(form.get("sort", "email")), str(form.get("dir", "asc")))
+
+    if target_email == current_email:
+        # Deleting yourself here would lock you out with no obvious way
+        # back in (ADMIN_EMAILS doesn't change, but your login account
+        # would be gone) — point at the CLI instead, which makes you type
+        # the email out deliberately rather than one misclick.
+        return HTMLResponse(
+            auth.render_admin_users_page(
+                user_store.list_users(),
+                current_email=current_email,
+                error="Can't delete your own account from this page — use `python manage_users.py remove <email>` if you really need to.",
+                sort=sort,
+                sort_dir=dir,
+            ),
+            status_code=400,
+        )
+
+    if not user_store.remove_user(target_email):
+        return HTMLResponse(
+            auth.render_admin_users_page(
+                user_store.list_users(),
+                current_email=current_email,
+                error=f"No account found for {target_email!r}.",
+                sort=sort,
+                sort_dir=dir,
+            ),
+            status_code=404,
+        )
+
+    logger.info("Admin %s deleted account %s", current_email, target_email)
+    return RedirectResponse(url=f"/admin/users?deleted={quote(target_email)}&sort={sort}&dir={dir}", status_code=303)
+
 
 store = BarStore(settings.db_full_path())
 stream_manager: LiveStreamManager | None = None
@@ -319,10 +674,12 @@ async def index() -> FileResponse:
 
 
 @app.get("/api/status")
-async def status() -> JSONResponse:
+async def status(request: Request) -> JSONResponse:
     return JSONResponse(
         {
             "app_version": settings.app_version,
+            "current_user": auth.get_current_email(request),
+            "is_admin": auth.is_admin(request),
             "has_credentials": settings.has_credentials(),
             "paper": settings.paper,
             "data_feed": settings.data_feed,
@@ -1036,6 +1393,12 @@ async def api_watchlist_quotes(watchlist_id: str) -> JSONResponse:
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
+    if not auth.is_authenticated(websocket):
+        # 4401 is a made-up (non-reserved, >=4000) close code the frontend
+        # checks for to distinguish "not logged in" from an ordinary drop —
+        # see connectWebSocket() in web/static/index.html.
+        await websocket.close(code=4401)
+        return
     await websocket.accept()
     _ws_clients.add(websocket)
     try:
