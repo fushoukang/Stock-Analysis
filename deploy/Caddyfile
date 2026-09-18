@@ -1,0 +1,31 @@
+# Caddy reverse proxy + automatic HTTPS for we-trade.me.
+#
+# Install: sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#          sudo systemctl reload caddy   (or: systemctl enable --now caddy)
+#
+# Caddy automatically requests and renews a Let's Encrypt certificate for
+# we-trade.me the first time it starts, as long as:
+#   - DNS: we-trade.me's A record points at this server's IP
+#   - Ports 80 and 443 are open in the firewall (80 is needed for the
+#     ACME HTTP challenge, not just as an HTTP->HTTPS redirect)
+# No certbot, no manual renewal — Caddy handles the whole certificate
+# lifecycle itself.
+
+we-trade.me {
+	reverse_proxy 127.0.0.1:8000
+
+	# Modest response header hardening — cheap to add, no downside for
+	# this app.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+}
+
+# Also answer on www. with a redirect to the bare domain, since some
+# people will type it out of habit. Remove this block if you never plan
+# to use www.we-trade.me.
+www.we-trade.me {
+	redir https://we-trade.me{uri} permanent
+}

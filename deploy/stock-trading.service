@@ -1,0 +1,38 @@
+# systemd unit for the Stock Analysis app (we-trade.me).
+#
+# Install:
+#   sudo cp deploy/stock-trading.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now stock-trading
+#
+# Logs:
+#   sudo journalctl -u stock-trading -f
+#
+# Assumes the app lives at /opt/stock-trading, owned by a dedicated
+# "stockapp" service user (never root), and that /opt/stock-trading/.venv
+# was created with `uv venv --python 3.13 .venv` + `uv pip install -r
+# requirements.txt` (see deploy/README.md).
+
+[Unit]
+Description=Stock Analysis (we-trade.me)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stockapp
+Group=stockapp
+WorkingDirectory=/opt/stock-trading
+ExecStart=/opt/stock-trading/.venv/bin/python /opt/stock-trading/main.py
+Restart=on-failure
+RestartSec=5
+
+# Modest hardening — the app only needs its own directory and outbound
+# network (Alpaca REST/WebSocket, SMTP); it never needs new privileges.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/stock-trading
+
+[Install]
+WantedBy=multi-user.target
