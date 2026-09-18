@@ -441,8 +441,8 @@ def render_signup_page(*, error: str | None = None, email_value: str = "") -> st
     # correct if the code is ever changed or removed from .env.
     guest_code = settings.registration_codes().get("GUEST")
     guest_hint_html = (
-        f'<div class="notice">New here? Enter <code>{html.escape(guest_code)}</code> '
-        "as the registration code below for guest access.</div>"
+        f'<div class="notice">Enter <code>{html.escape(guest_code)}</code> as the '
+        "registration code below if you don't have one.</div>"
         if guest_code
         else ""
     )

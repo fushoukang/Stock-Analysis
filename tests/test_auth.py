@@ -579,7 +579,7 @@ def test_render_signup_page_shows_guest_code_hint_when_configured(monkeypatch):
         ),
     )
     html_out = auth.render_signup_page()
-    assert "New here?" in html_out
+    assert "if you don't have one" in html_out
     assert "0000" in html_out
     assert "secret" not in html_out  # only the guest code is ever surfaced
 
@@ -595,7 +595,7 @@ def test_render_signup_page_omits_guest_hint_when_no_guest_code(monkeypatch):
         ),
     )
     html_out = auth.render_signup_page()
-    assert "New here?" not in html_out
+    assert "if you don't have one" not in html_out
 
 
 def test_render_login_page_shows_forgot_password_link(monkeypatch):

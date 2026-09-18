@@ -214,8 +214,9 @@ indicators.
 
      **Public guest signup:** the `GUEST` group is treated specially —
      set `REGISTRATION_CODE_GUEST=0000` (or any value) and the `/signup`
-     page shows it directly to visitors ("New here? Enter 0000 for guest
-     access") instead of expecting them to already know a code. Every
+     page shows it directly to visitors ("Enter 0000 as the registration
+     code below if you don't have one") instead of expecting them to
+     already know a code. Every
      other group's code stays private (never shown in the UI); this is
      meant specifically for a low-friction default you're fine handing to
      anyone, not a real secret.
