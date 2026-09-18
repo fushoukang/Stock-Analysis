@@ -558,7 +558,7 @@ def test_render_login_page_shows_welcome_intro_when_not_configured(monkeypatch):
     monkeypatch.setattr(auth, "settings", _fake_settings())
     html_out = auth.render_login_page()
     assert "Welcome to" in html_out
-    assert "Stock Analysis" in html_out
+    assert "Real Time Stock Trend Analysis" in html_out
 
 
 def test_render_login_page_shows_welcome_intro_when_configured(monkeypatch):

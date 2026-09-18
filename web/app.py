@@ -69,7 +69,7 @@ logger = logging.getLogger("web.app")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="Stock Analysis")
+app = FastAPI(title="Real Time Stock Trend Analysis")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # --- Authentication ---

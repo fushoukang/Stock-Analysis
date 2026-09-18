@@ -321,12 +321,12 @@ def _page(title: str, body: str, *, wide: bool = False) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} — Stock Analysis</title>
+<title>{html.escape(title)} — Real Time Stock Trend Analysis</title>
 <style>{_PAGE_STYLE}</style>
 </head>
 <body>
   <div class="{card_class}">
-    <h1>Stock Analysis</h1>
+    <h1>Real Time Stock Trend Analysis</h1>
     <p class="subtitle">{html.escape(title)}</p>
     {body}
   </div>
@@ -342,7 +342,7 @@ def _page(title: str, body: str, *, wide: bool = False) -> str:
 # so it appears in both branches below.
 WELCOME_HTML = """
 <div class="welcome">
-  <p>Welcome to <strong>Stock Analysis</strong> — a real-time dashboard for
+  <p>Welcome to <strong>Real Time Stock Trend Analysis</strong> — a real-time dashboard for
   stock and crypto markets, built on Alpaca's market data.</p>
   <p>Track live candlestick charts with technical indicators (RSI, MACD,
   KDJ, Bollinger Bands, SuperTrend, and more), per-indicator trend signals,
