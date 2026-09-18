@@ -36,16 +36,21 @@ from charts.candlestick import build_candlestick_figure
 from indicators.signals import compute_signals, compute_composite_signal
 from data.company_names import get_company_name
 from data.watchlists import (
-    create_watchlist,
-    delete_watchlist,
-    get_watchlist,
-    load_watchlists,
-    update_watchlist,
+    create_user_watchlist,
+    delete_user_watchlist,
+    delete_user_watchlists_file,
+    get_user_watchlist,
+    load_user_watchlists,
+    update_user_watchlist,
 )
 from alerts.kdj_monitor import (
     KDJMonitor,
+    all_monitored_symbols,
+    delete_user_monitor_list_file,
     load_monitor_symbols,
-    save_monitor_symbols,
+    load_user_monitor_symbols,
+    save_user_monitor_symbols,
+    users_watching_symbol,
     load_crypto_kdj_email_alerts_enabled,
     save_crypto_kdj_email_alerts_enabled,
 )
@@ -158,6 +163,7 @@ async def login_submit(request: Request) -> Response:
         max_age=settings.session_max_age_hours * 3600,
         httponly=True,
         samesite="lax",
+        secure=settings.session_cookie_secure,
     )
     return response
 
@@ -411,6 +417,11 @@ async def admin_users_delete_submit(request: Request) -> Response:
             status_code=404,
         )
 
+    # Clean up this account's private per-user data files too, so nothing
+    # orphaned is left behind once the account itself is gone.
+    delete_user_watchlists_file(target_email)
+    delete_user_monitor_list_file(target_email)
+
     logger.info("Admin %s deleted account %s", current_email, target_email)
     return RedirectResponse(url=f"/admin/users?deleted={quote(target_email)}&sort={sort}&dir={dir}", status_code=303)
 
@@ -512,9 +523,10 @@ async def on_startup() -> None:
         return
 
     # Seed the DB with recent history so the chart isn't empty on first load.
-    # Also backfill/stream the KDJ monitor-list symbols even if they aren't in
-    # the GUI watchlist, so the monitor has live data to check every minute.
-    monitor_symbols = load_monitor_symbols()
+    # Also backfill/stream every account's own KDJ monitor-list symbols
+    # (the union — see all_monitored_symbols) even if they aren't in the
+    # GUI watchlist, so the monitor has live data to check every minute.
+    monitor_symbols = all_monitored_symbols()
     all_symbols = sorted(set(settings.watchlist) | set(monitor_symbols))
 
     _market_window_open = is_within_market_data_window()
@@ -543,7 +555,16 @@ async def on_startup() -> None:
                 "SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD not set — the KDJ monitor "
                 "will detect crosses but can't email alerts until these are set."
             )
-        kdj_monitor = KDJMonitor(store, on_alert=_broadcast_kdj_alert)
+        kdj_monitor = KDJMonitor(
+            store,
+            on_alert=_broadcast_kdj_alert,
+            # Re-union every account's own Symbol list each cycle (instead
+            # of the single old global monitor_list.txt), and route each
+            # detected cross's email to whichever account(s) actually have
+            # that symbol on their list, instead of one fixed address.
+            symbols_provider=all_monitored_symbols,
+            recipients_provider=users_watching_symbol,
+        )
         asyncio.create_task(kdj_monitor.run_forever())
         logger.info(
             "KDJ monitor started (every %ss) for: %s",
@@ -677,7 +698,6 @@ async def index() -> FileResponse:
 async def status(request: Request) -> JSONResponse:
     return JSONResponse(
         {
-            "app_version": settings.app_version,
             "current_user": auth.get_current_email(request),
             "is_admin": auth.is_admin(request),
             "has_credentials": settings.has_credentials(),
@@ -688,7 +708,11 @@ async def status(request: Request) -> JSONResponse:
             "market_open": is_within_market_data_window(),
             "market_data_start_et": settings.market_data_start_et.strftime("%H:%M"),
             "market_data_end_et": settings.market_data_end_et.strftime("%H:%M"),
-            "kdj_monitor_symbols": load_monitor_symbols(),
+            "kdj_monitor_symbols": (
+                load_user_monitor_symbols(auth.get_current_email(request))
+                if auth.get_current_email(request)
+                else load_monitor_symbols()
+            ),
             "kdj_monitor_email_configured": settings.has_smtp_credentials(),
             "crypto_streaming": crypto_stream_manager is not None,
             "crypto_stream_connected": crypto_stream_manager.is_connected() if crypto_stream_manager is not None else False,
@@ -700,12 +724,16 @@ async def status(request: Request) -> JSONResponse:
 
 
 @app.get("/api/symbols")
-async def get_symbols() -> JSONResponse:
-    # Dropdown suggestions for the Symbol box come from monitor_list.txt (the
-    # symbols already being watched/streamed) — re-read live so editing the
-    # file takes effect without restarting the app. The Symbol field stays a
-    # free-text box too, so any other ticker can still be typed directly.
-    return JSONResponse({"symbols": load_monitor_symbols()})
+async def get_symbols(request: Request) -> JSONResponse:
+    # Dropdown suggestions for the Symbol box come from the signed-in
+    # account's own Symbol list (falling back to the shared default
+    # template until they've saved one of their own) — re-read live so
+    # editing it takes effect without restarting the app. The Symbol field
+    # stays a free-text box too, so any other ticker can still be typed
+    # directly.
+    current_email = auth.get_current_email(request)
+    symbols = load_user_monitor_symbols(current_email) if current_email else load_monitor_symbols()
+    return JSONResponse({"symbols": symbols})
 
 
 @app.get("/api/crypto-symbols")
@@ -719,10 +747,16 @@ async def get_crypto_symbols() -> JSONResponse:
 
 @app.post("/api/monitor-list")
 async def update_monitor_list(request: Request) -> JSONResponse:
-    """Saves the Symbol dropdown's "Edit List" popup back to
-    monitor_list.txt. Expects {"symbols": ["AAPL", "MSFT", ...]}. This is
-    the same file the KDJ monitor watches, so newly added symbols also pick
-    up KDJ cross alerts on the monitor's next cycle without a restart."""
+    """Saves the Symbol dropdown's "Edit List" popup back to the signed-in
+    account's own Symbol list (forking it off the shared default template
+    if this is their first save). Expects {"symbols": ["AAPL", "MSFT", ...]}.
+    This is the same list the KDJ monitor unions across every account, so a
+    newly added symbol also picks up KDJ cross alerts (emailed to this
+    account) on the monitor's next cycle without a restart."""
+    current_email = auth.get_current_email(request)
+    if not current_email:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
     try:
         body = await request.json()
     except Exception:
@@ -736,9 +770,9 @@ async def update_monitor_list(request: Request) -> JSONResponse:
         )
 
     try:
-        saved = save_monitor_symbols(symbols)
+        saved = save_user_monitor_symbols(current_email, symbols)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to save monitor_list.txt")
+        logger.exception("Failed to save Symbol list for %s", current_email)
         return JSONResponse({"error": f"Failed to save: {exc}"}, status_code=500)
 
     # Start streaming any newly added symbols immediately, so the chart and
@@ -1289,13 +1323,31 @@ def _watchlist_body_fields(body: dict) -> tuple[str, str, list[str]] | JSONRespo
     return name, note, symbols
 
 
+def _require_current_email(request: Request) -> str | JSONResponse:
+    """Shared guard for the /api/watchlists* routes below: every one of them
+    scopes its data to the signed-in account, so there's no sensible
+    behavior without one (the require_login middleware should already
+    guarantee this, but this is a cheap, explicit belt-and-suspenders
+    check rather than assuming)."""
+    email = auth.get_current_email(request)
+    if not email:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    return email
+
+
 @app.get("/api/watchlists")
-async def api_list_watchlists() -> JSONResponse:
-    return JSONResponse({"watchlists": [asdict(w) for w in load_watchlists()]})
+async def api_list_watchlists(request: Request) -> JSONResponse:
+    email = _require_current_email(request)
+    if isinstance(email, JSONResponse):
+        return email
+    return JSONResponse({"watchlists": [asdict(w) for w in load_user_watchlists(email)]})
 
 
 @app.post("/api/watchlists")
 async def api_create_watchlist(request: Request) -> JSONResponse:
+    email = _require_current_email(request)
+    if isinstance(email, JSONResponse):
+        return email
     try:
         body = await request.json()
     except Exception:
@@ -1304,12 +1356,15 @@ async def api_create_watchlist(request: Request) -> JSONResponse:
     if isinstance(parsed, JSONResponse):
         return parsed
     name, note, symbols = parsed
-    wl = create_watchlist(name, note, symbols)
+    wl = create_user_watchlist(email, name, note, symbols)
     return JSONResponse({"watchlist": asdict(wl)})
 
 
 @app.put("/api/watchlists/{watchlist_id}")
 async def api_update_watchlist(watchlist_id: str, request: Request) -> JSONResponse:
+    email = _require_current_email(request)
+    if isinstance(email, JSONResponse):
+        return email
     try:
         body = await request.json()
     except Exception:
@@ -1318,27 +1373,34 @@ async def api_update_watchlist(watchlist_id: str, request: Request) -> JSONRespo
     if isinstance(parsed, JSONResponse):
         return parsed
     name, note, symbols = parsed
-    wl = update_watchlist(watchlist_id, name, note, symbols)
+    wl = update_user_watchlist(email, watchlist_id, name, note, symbols)
     if wl is None:
         return JSONResponse({"error": "Watchlist not found"}, status_code=404)
     return JSONResponse({"watchlist": asdict(wl)})
 
 
 @app.delete("/api/watchlists/{watchlist_id}")
-async def api_delete_watchlist(watchlist_id: str) -> JSONResponse:
-    if not delete_watchlist(watchlist_id):
+async def api_delete_watchlist(watchlist_id: str, request: Request) -> JSONResponse:
+    email = _require_current_email(request)
+    if isinstance(email, JSONResponse):
+        return email
+    if not delete_user_watchlist(email, watchlist_id):
         return JSONResponse({"error": "Watchlist not found"}, status_code=404)
     return JSONResponse({"deleted": True})
 
 
 @app.get("/api/watchlists/{watchlist_id}/quotes")
-async def api_watchlist_quotes(watchlist_id: str) -> JSONResponse:
-    """Per-symbol company name + current price + change for one watchlist.
-    Company name is static reference data (always looked up, any time of
-    day — see data/company_names.py). Price/change come from Alpaca and are
-    gated by the market data window like every other Alpaca call in this
-    app; outside it, price/change are simply omitted (null)."""
-    wl = get_watchlist(watchlist_id)
+async def api_watchlist_quotes(watchlist_id: str, request: Request) -> JSONResponse:
+    """Per-symbol company name + current price + change for one watchlist
+    on the signed-in account's own list. Company name is static reference
+    data (always looked up, any time of day — see data/company_names.py).
+    Price/change come from Alpaca and are gated by the market data window
+    like every other Alpaca call in this app; outside it, price/change are
+    simply omitted (null)."""
+    email = _require_current_email(request)
+    if isinstance(email, JSONResponse):
+        return email
+    wl = get_user_watchlist(email, watchlist_id)
     if wl is None:
         return JSONResponse({"error": "Watchlist not found"}, status_code=404)
 

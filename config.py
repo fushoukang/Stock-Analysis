@@ -28,24 +28,6 @@ logger = logging.getLogger("config")
 EASTERN = ZoneInfo("America/New_York")
 
 
-def _read_pyproject_version() -> str:
-    """pyproject.toml's `version = "..."` is the single source of truth for
-    the app's version number (see README) — read it with a small regex
-    rather than a TOML parser, since this project targets Python 3.13+ but
-    is sometimes run under older interpreters that lack the stdlib
-    `tomllib` (added in 3.11), and pulling in a third-party TOML dependency
-    just for one string isn't worth it. Falls back to "unknown" if the file
-    is missing or the line isn't found, rather than raising — a broken
-    version display shouldn't ever stop the app from starting."""
-    try:
-        text = (PROJECT_ROOT / "pyproject.toml").read_text()
-        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-        return m.group(1) if m else "unknown"
-    except Exception:
-        logger.warning("Could not read version from pyproject.toml", exc_info=True)
-        return "unknown"
-
-
 def detect_local_ipv4() -> str:
     """Best-effort detection of this machine's LAN IPv4 address, so the
     server can bind to it without a real address ever needing to be typed
@@ -110,10 +92,6 @@ def _time_env(name: str, default: str) -> dt_time:
 
 @dataclass(frozen=True)
 class Settings:
-    # Read from pyproject.toml's `version = "..."` — see _read_pyproject_version
-    # above. That file is the single source of truth; this just surfaces it
-    # (e.g. in the GUI header, via /api/status) without duplicating the number.
-    app_version: str = field(default_factory=_read_pyproject_version)
     api_key: str = field(default_factory=lambda: os.getenv("ALPACA_API_KEY", ""))
     secret_key: str = field(default_factory=lambda: os.getenv("ALPACA_SECRET_KEY", ""))
     paper: bool = field(default_factory=lambda: _bool_env("ALPACA_PAPER", False))
@@ -156,6 +134,14 @@ class Settings:
     watchlists_path: str = field(
         default_factory=lambda: os.getenv("WATCHLISTS_PATH", "watchlists.json")
     )
+    # Directory holding each account's own private copy of the Watchlists
+    # page's lists (see data/watchlists.py's load_user_watchlists) — one
+    # JSON file per user, named from a hash of their email. watchlists.json
+    # above stays in place unchanged as the *default template* every new
+    # account's copy is seeded from the first time they touch it.
+    user_watchlists_dir: str = field(
+        default_factory=lambda: os.getenv("USER_WATCHLISTS_DIR", "data/user_watchlists")
+    )
     # "auto" (the default) detects this machine's LAN IPv4 at startup so the
     # GUI is reachable from other devices on the network without hardcoding
     # an address in .env. Set HOST explicitly (e.g. 127.0.0.1) to override.
@@ -166,6 +152,15 @@ class Settings:
     # File of symbols (whitespace/comma-separated) to watch for a KDJ K/D cross.
     monitor_list_path: str = field(
         default_factory=lambda: os.getenv("MONITOR_LIST_PATH", "monitor_list.txt")
+    )
+    # Directory holding each account's own private copy of the Focus Stock
+    # Analysis page's Symbol list (see alerts/kdj_monitor.py's
+    # load_user_monitor_symbols) — one text file per user, named from a
+    # hash of their email. monitor_list.txt above stays in place unchanged
+    # as the *default template* every new account's copy is seeded from
+    # the first time they touch it.
+    user_monitor_lists_dir: str = field(
+        default_factory=lambda: os.getenv("USER_MONITOR_LISTS_DIR", "data/user_monitor_lists")
     )
     # How often (seconds) to recompute KDJ and check for a fresh cross.
     kdj_check_interval_sec: int = field(
@@ -276,6 +271,17 @@ class Settings:
     # How long a login stays valid before the browser has to sign in again.
     session_max_age_hours: int = field(
         default_factory=lambda: int(os.getenv("SESSION_MAX_AGE_HOURS", "168"))  # 7 days
+    )
+    # Whether the session cookie is sent with the `Secure` flag (browser
+    # will then only ever send it back over HTTPS). Off by default so the
+    # app keeps working on a plain-HTTP LAN deployment (HOST=auto — see
+    # README's "Not Secure" note); turn this on in .env once the app is
+    # actually served over real HTTPS (e.g. behind Caddy/nginx with a real
+    # certificate — see deploy/README.md), otherwise the browser will
+    # silently refuse to store/send the cookie at all over plain HTTP and
+    # login will appear broken.
+    session_cookie_secure: bool = field(
+        default_factory=lambda: _bool_env("SESSION_COOKIE_SECURE", False)
     )
     # How long a just-signed-up account's "click to verify your email" link
     # stays valid before they'd need to sign up again (there's no resend for

@@ -12,7 +12,6 @@
   #logout-link, #admin-users-link { color: #9ca3af; font-size: 12px; text-decoration: none; padding: 4px 8px; border: 1px solid #374151; border-radius: 4px; }
   #logout-link:hover, #admin-users-link:hover { color: white; border-color: #6b7280; }
   #admin-users-link { display: none; }
-  #app-version { font-size: 12px; font-weight: 400; color: #9ca3af; }
   #status-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; display: inline-block; margin-right: 6px; }
   #status-dot.live { background: #22c55e; }
   #status-dot.off { background: #ef4444; }
@@ -117,7 +116,7 @@
 </head>
 <body>
 <header>
-  <h1>Stock Analysis <span id="app-version" title="From pyproject.toml"></span></h1>
+  <h1>Stock Analysis</h1>
   <span id="ws-status"><span id="status-dot"></span><span id="status-text">connecting…</span></span>
   <span id="market-closed-banner">The market has closed. Live data resumes at <span id="market-reopen-time"></span> ET.</span>
   <select id="category-select">
@@ -277,7 +276,6 @@ const msgDiv = document.getElementById("msg");
 const wsStatusSpan = document.getElementById("ws-status");
 const statusDot = document.getElementById("status-dot");
 const statusText = document.getElementById("status-text");
-const appVersionSpan = document.getElementById("app-version");
 const currentUserSpan = document.getElementById("current-user");
 const adminUsersLink = document.getElementById("admin-users-link");
 const marketClosedBanner = document.getElementById("market-closed-banner");
@@ -887,7 +885,6 @@ async function refreshMarketStatus() {
   try {
     const res = await fetch("/api/status");
     const body = await res.json();
-    if (body.app_version) appVersionSpan.textContent = `(v${body.app_version})`;
     if (body.current_user) currentUserSpan.textContent = `Signed in as ${body.current_user}`;
     adminUsersLink.style.display = body.is_admin ? "" : "none";
     marketOpen = body.market_open !== false;
