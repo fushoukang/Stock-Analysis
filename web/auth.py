@@ -295,6 +295,9 @@ _PAGE_STYLE = """
   .info { background: #dcfce7; color: #15803d; font-size: 13px; padding: 8px 10px; border-radius: 4px; margin-bottom: 14px; }
   .notice { background: #fef3c7; color: #92400e; font-size: 13px; padding: 10px 12px; border-radius: 4px; line-height: 1.5; }
   .notice code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; }
+  .welcome { font-size: 13px; color: #4b5563; line-height: 1.5; margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid #e5e7eb; }
+  .welcome p { margin: 0 0 8px; }
+  .welcome p:last-child { margin-bottom: 0; }
   .footer-link { margin-top: 16px; font-size: 12px; color: #6b7280; text-align: center; }
   .footer-link a { color: #2563eb; text-decoration: none; }
   .footer-link a:hover { text-decoration: underline; }
@@ -332,6 +335,22 @@ def _page(title: str, body: str, *, wide: bool = False) -> str:
 
 
 # --- Login page ---
+# Shown to any signed-out visitor — the first thing anyone hitting this app
+# ever sees, whether they already have an account or are arriving cold with
+# no idea what this software even does. WELCOME_HTML is deliberately a
+# short, generic pitch (not tied to whether login/signup is configured yet)
+# so it appears in both branches below.
+WELCOME_HTML = """
+<div class="welcome">
+  <p>Welcome to <strong>Stock Analysis</strong> — a real-time dashboard for
+  stock and crypto markets, built on Alpaca's market data.</p>
+  <p>Track live candlestick charts with technical indicators (RSI, MACD,
+  KDJ, Bollinger Bands, SuperTrend, and more), per-indicator trend signals,
+  KDJ cross alerts, and personal watchlists — all in one place.</p>
+</div>
+"""
+
+
 def render_login_page(
     *,
     error: str | None = None,
@@ -344,7 +363,8 @@ def render_login_page(
     configured = has_any_users() or registration_open()
 
     if not configured:
-        body = """
+        body = f"""
+        {WELCOME_HTML}
         <div class="notice">
           Nothing's set up yet. Either create your own account with
           <code>python manage_users.py add &lt;email&gt;</code>, or set
@@ -373,6 +393,7 @@ def render_login_page(
     )
 
     body = f"""
+    {WELCOME_HTML}
     {info_html}
     {error_html}
     <form method="post" action="/login">
@@ -413,7 +434,20 @@ def render_signup_page(*, error: str | None = None, email_value: str = "") -> st
 
     error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
     safe_email = html.escape(email_value, quote=True)
+    # A "GUEST" registration code is meant to be public/low-friction (unlike
+    # a real code you'd hand out privately), so surface it directly here
+    # rather than making a new visitor guess what to type. Pulled live from
+    # settings.registration_codes() rather than hardcoded, so this stays
+    # correct if the code is ever changed or removed from .env.
+    guest_code = settings.registration_codes().get("GUEST")
+    guest_hint_html = (
+        f'<div class="notice">New here? Enter <code>{html.escape(guest_code)}</code> '
+        "as the registration code below for guest access.</div>"
+        if guest_code
+        else ""
+    )
     body = f"""
+    {guest_hint_html}
     {error_html}
     <form method="post" action="/signup">
       <label>Email

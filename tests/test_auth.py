@@ -551,6 +551,53 @@ def test_render_admin_delete_confirm_page_carries_sort_state():
 
 # --- Forgot / reset password page rendering ---
 
+# --- Welcome intro + guest registration code hint ---
+
+def test_render_login_page_shows_welcome_intro_when_not_configured(monkeypatch):
+    monkeypatch.setattr(auth, "user_store", _fake_user_store({}))
+    monkeypatch.setattr(auth, "settings", _fake_settings())
+    html_out = auth.render_login_page()
+    assert "Welcome to" in html_out
+    assert "Stock Analysis" in html_out
+
+
+def test_render_login_page_shows_welcome_intro_when_configured(monkeypatch):
+    monkeypatch.setattr(auth, "user_store", _fake_user_store({"fenix@example.com": {"password": "pw", "verified": True}}))
+    monkeypatch.setattr(auth, "settings", _fake_settings())
+    html_out = auth.render_login_page()
+    assert "Welcome to" in html_out
+
+
+def test_render_signup_page_shows_guest_code_hint_when_configured(monkeypatch):
+    monkeypatch.setattr(
+        auth,
+        "settings",
+        _fake_settings(
+            has_registration_code=lambda: True,
+            has_smtp_credentials=lambda: True,
+            registration_codes=lambda: {"GUEST": "0000", "FAMILY": "secret"},
+        ),
+    )
+    html_out = auth.render_signup_page()
+    assert "New here?" in html_out
+    assert "0000" in html_out
+    assert "secret" not in html_out  # only the guest code is ever surfaced
+
+
+def test_render_signup_page_omits_guest_hint_when_no_guest_code(monkeypatch):
+    monkeypatch.setattr(
+        auth,
+        "settings",
+        _fake_settings(
+            has_registration_code=lambda: True,
+            has_smtp_credentials=lambda: True,
+            registration_codes=lambda: {"FAMILY": "secret"},
+        ),
+    )
+    html_out = auth.render_signup_page()
+    assert "New here?" not in html_out
+
+
 def test_render_login_page_shows_forgot_password_link(monkeypatch):
     monkeypatch.setattr(auth, "user_store", _fake_user_store({"fenix@example.com": {"password": "pw", "verified": True}}))
     monkeypatch.setattr(auth, "settings", _fake_settings())

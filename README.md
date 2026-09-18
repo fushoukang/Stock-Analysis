@@ -68,7 +68,11 @@ indicators.
   matches the symbol (crypto pairs always contain "/", stock tickers never
   do, so the shared WebSocket alert message routes to the right page
   automatically)
-  - **Stock**: watches the symbols in `monitor_list.txt`. Emails toggle with
+  - **Stock**: watches the union of every account's own Symbol list (see the
+    per-user Symbol list note under **Watchlists** below) rather than one
+    shared list, and emails each detected cross only to the account(s)
+    actually watching that symbol — not one fixed address. Emails toggle
+    (for everyone, still a single on/off switch) with
     `KDJ_EMAIL_ALERTS_ENABLED` in `.env` (default `true`)
   - **Crypto**: watches `CRYPTO_KDJ_MONITOR_SYMBOLS` in `.env` (default
     `BTC/USDT`), runs 24/7 like the rest of the crypto data path (no
@@ -82,8 +86,10 @@ indicators.
     the starting value the first time that file doesn't exist yet
   - Either way, the monitor keeps running and detecting crosses even with its
     email switch off, and the on-screen WebSocket alert keeps firing — only
-    the email is silenced. Both instances email the same `ALERT_EMAIL_TO`
-    address via the same SMTP credentials
+    the email is silenced. Both use the same SMTP credentials; the crypto
+    monitor still emails the single fixed `ALERT_EMAIL_TO` address, while
+    the stock monitor emails whichever account(s) are actually watching the
+    symbol that crossed (see above)
 - Market data window: Alpaca (WebSocket stream, REST catch-up/backfill, and
   company-name lookups) is only ever contacted between `MARKET_DATA_START_ET`
   and `MARKET_DATA_END_ET` (default 6:30 AM - 6:00 PM ET, Mon-Fri — early +
@@ -106,20 +112,32 @@ indicators.
     current price and up/down direction (comparing the halt's pause
     threshold price to the prior close) via Alpaca
   - **Watchlists** — user-defined named lists of symbols (name + note +
-    symbols each), persisted to `watchlists.json` (`data/watchlists.py`,
-    configurable via `WATCHLISTS_PATH`). Shown as a bar of chips with a "+"
-    to create a new one; selecting a chip shows that list's symbols with
-    company name, current price, change, and a Trend column (price/change/
-    trend via Alpaca, gated by the market data window; company name always
-    available). Trend is the same composite majority-vote read described
-    above (SMA + EMA + RSI + MACD on 5-minute bars), shown as a colored
-    "Bullish/Bearish/Neutral (agree/total)" pill — a quick per-symbol scan
-    across the whole list without opening each chart. "Edit The Watchlist"
-    and "Delete The Watchlist" buttons below the table edit or remove the
-    selected list. Distinct from `monitor_list.txt` (the Symbol dropdown's
-    "Edit List" — the list this app actively streams and runs KDJ alerts
-    on): watchlists are just user-organized reference lists, not tied to
-    streaming or alerting
+    symbols each). **Per account**: each signed-in user has their own
+    private set, persisted under `data/user_watchlists/` (one file per
+    user, `data/watchlists.py`, directory configurable via
+    `USER_WATCHLISTS_DIR`). The very first time an account creates/edits/
+    deletes a watchlist (or simply loads the page), their private copy is
+    seeded from `watchlists.json` (the shared default template, still
+    configurable via `WATCHLISTS_PATH`) — after that, their list is fully
+    independent: their own edits never affect anyone else's, and later
+    edits to the template don't retroactively change accounts already
+    seeded. Shown as a bar of chips with a "+" to create a new one;
+    selecting a chip shows that list's symbols with company name, current
+    price, change, and a Trend column (price/change/trend via Alpaca,
+    gated by the market data window; company name always available).
+    Trend is the same composite majority-vote read described above (SMA +
+    EMA + RSI + MACD on 5-minute bars), shown as a colored "Bullish/
+    Bearish/Neutral (agree/total)" pill — a quick per-symbol scan across
+    the whole list without opening each chart. "Edit The Watchlist" and
+    "Delete The Watchlist" buttons below the table edit or remove the
+    selected list. Distinct from the Focus Stock Analysis page's Symbol
+    list (the Symbol dropdown's "Edit List" — the list this app actively
+    streams and runs KDJ alerts on, also per-account now, persisted under
+    `data/user_monitor_lists/`/`USER_MONITOR_LISTS_DIR` and seeded the same
+    way from `monitor_list.txt`): watchlists are just user-organized
+    reference lists, not tied to streaming or alerting. Deleting an
+    account (admin panel) also deletes that account's private watchlist
+    and Symbol list files
 
 ## Setup
 
@@ -194,6 +212,14 @@ indicators.
      ends up with identical access to the app either way. See who signed
      up under which group with `python manage_users.py list`.
 
+     **Public guest signup:** the `GUEST` group is treated specially —
+     set `REGISTRATION_CODE_GUEST=0000` (or any value) and the `/signup`
+     page shows it directly to visitors ("New here? Enter 0000 for guest
+     access") instead of expecting them to already know a code. Every
+     other group's code stays private (never shown in the UI); this is
+     meant specifically for a low-friction default you're fine handing to
+     anyone, not a real secret.
+
    **Forgot password:** anyone with an account can click "Forgot
    password?" on the sign-in page, enter their email, and get a "set a
    new password" link — no admin involvement needed. Requires SMTP to be
@@ -262,6 +288,10 @@ data/
   crypto_stream.py       Alpaca live WebSocket stream (crypto) -> store + broadcast queue
   crypto_info.py          crypto display-name lookup + Binance quote link
   users.py                login accounts (salted PBKDF2 hashes) -> users.json
+  watchlists.py            Watchlists page CRUD -> watchlists.json (default
+                            template) + data/user_watchlists/ (per account)
+  user_paths.py            shared email -> filename-safe slug helper, used
+                            by the two per-account data stores above/below
 indicators/
   moving_average.py     SMA, EMA, MA
   bollinger.py           Bollinger Bands
@@ -286,7 +316,10 @@ web/
   static/index.html      browser GUI
 main.py                 entry point (uvicorn)
 manage_users.py         CLI to add/remove/list login accounts (see Setup step 5)
-monitor_list.txt        symbols the KDJ monitor watches
+monitor_list.txt        default-template symbols for the Focus Stock
+                         Analysis page's Symbol list / KDJ monitor
+data/user_watchlists/   each account's own private Watchlists (gitignored)
+data/user_monitor_lists/ each account's own private Symbol list (gitignored)
 ```
 
 ## Tests
