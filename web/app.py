@@ -88,7 +88,7 @@ _ADMIN_PATH_PREFIX = "/admin"
 # Paths a browser navigates directly to (as opposed to fetch()/WebSocket
 # calls from the GUI's own JS) — an unauthenticated visit here redirects to
 # /login instead of returning a bare 401 JSON body.
-_BROWSER_NAV_PATHS = {"/"}
+_BROWSER_NAV_PATHS = {"/", "/account"}
 
 
 def _client_ip(request: Request) -> str:
@@ -112,8 +112,8 @@ async def require_login(request: Request, call_next):
 
 
 @app.get("/login")
-async def login_page(next: str = "/") -> HTMLResponse:
-    return HTMLResponse(auth.render_login_page(next_path=next))
+async def login_page(next: str = "/", info: str = "") -> HTMLResponse:
+    return HTMLResponse(auth.render_login_page(next_path=next, info=info or None))
 
 
 @app.post("/login")
@@ -172,6 +172,66 @@ async def login_submit(request: Request) -> Response:
 @app.post("/logout")
 async def logout() -> RedirectResponse:
     response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(auth.SESSION_COOKIE_NAME)
+    return response
+
+
+# --- Self-service account page: view your own info, delete your own
+# account (see web/auth.py's render_account_page). Ordinary require_login
+# already gates this like everything else — no admin needed, since this
+# only ever acts on the signed-in account itself. ---
+def _current_user_record(request: Request):
+    """The signed-in account's own data/users.py User record, or None if
+    somehow already gone (e.g. the session cookie is still technically
+    valid for a moment but the account was just deleted from elsewhere)."""
+    current_email = auth.get_current_email(request)
+    if current_email is None:
+        return None
+    return next((u for u in user_store.list_users() if u.email == current_email), None)
+
+
+@app.get("/account")
+async def account_page(request: Request) -> Response:
+    user = _current_user_record(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    return HTMLResponse(auth.render_account_page(user))
+
+
+@app.post("/account/delete")
+async def account_delete_submit(request: Request) -> Response:
+    user = _current_user_record(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+
+    ip = _client_ip(request)
+    rate_key = f"account-delete:{ip}"
+    if auth.is_rate_limited(rate_key):
+        return HTMLResponse(
+            auth.render_account_page(user, error="Too many attempts — try again in a minute."),
+            status_code=429,
+        )
+
+    form = await request.form()
+    password = str(form.get("password", ""))
+    # Deliberately re-checks against `user.email` (the signed-in account
+    # itself), not anything from the form — this can only ever delete your
+    # own account, never one you happen to know the password for.
+    if auth.check_credentials(user.email, password) != user.email:
+        auth.record_failed_attempt(rate_key)
+        return HTMLResponse(auth.render_account_page(user, error="Incorrect password."), status_code=401)
+
+    user_store.remove_user(user.email)
+    # Same per-user data cleanup as an admin-initiated delete (see
+    # /admin/users/delete above) — no orphaned watchlist/monitor-list files
+    # left behind just because this one was self-initiated.
+    delete_user_watchlists_file(user.email)
+    delete_user_monitor_list_file(user.email)
+    logger.info("Account %s deleted itself", user.email)
+
+    response = RedirectResponse(
+        url=f"/login?info={quote('Your account has been deleted.')}", status_code=303
+    )
     response.delete_cookie(auth.SESSION_COOKIE_NAME)
     return response
 

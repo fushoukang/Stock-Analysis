@@ -252,6 +252,15 @@ indicators.
    in-browser alternative to `manage_users.py list/remove`, not a
    replacement — the CLI still works the same as before.
 
+   **Managing your own account:** any signed-in user (not just admins) has
+   a "My account" link in the header (`/account`) showing their email,
+   registration group, and signup date, plus a self-service "Delete my
+   account" control. It requires re-entering the current password to
+   confirm — an ordinary session doing this to itself, unlike the admin
+   flow above, so a left-open browser can't delete the account with one
+   misclick. Deleting removes the account, its watchlists, and its saved
+   Symbol list, ends the session immediately, and can't be undone.
+
 ## Run
 
 ```

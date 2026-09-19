@@ -9,8 +9,8 @@
   header { background: #111827; color: white; padding: 14px 20px; display: flex; align-items: center; gap: 16px; }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
   #current-user { margin-left: auto; color: #9ca3af; font-size: 12px; }
-  #logout-link, #admin-users-link { color: #9ca3af; font-size: 12px; text-decoration: none; padding: 4px 8px; border: 1px solid #374151; border-radius: 4px; }
-  #logout-link:hover, #admin-users-link:hover { color: white; border-color: #6b7280; }
+  #logout-link, #admin-users-link, #account-link { color: #9ca3af; font-size: 12px; text-decoration: none; padding: 4px 8px; border: 1px solid #374151; border-radius: 4px; }
+  #logout-link:hover, #admin-users-link:hover, #account-link:hover { color: white; border-color: #6b7280; }
   #admin-users-link { display: none; }
   #status-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; display: inline-block; margin-right: 6px; }
   #status-dot.live { background: #22c55e; }
@@ -129,6 +129,7 @@
   </select>
   <span id="current-user"></span>
   <a id="admin-users-link" href="/admin/users">Manage accounts</a>
+  <a id="account-link" href="/account">My account</a>
   <a id="logout-link" href="/logout">Logout</a>
 </header>
 

@@ -575,6 +575,44 @@ def render_verify_result_page(*, success: bool) -> str:
     return _page("Email verification", body)
 
 
+# --- Account page (self-service — see web/app.py's /account and
+# /account/delete routes) ---
+def render_account_page(user, *, error: str | None = None) -> str:
+    """`user` is a data/users.py User (or anything with the same
+    email/group/created_at attributes) for the currently signed-in account.
+    Deleting your own account is gated on re-entering your current
+    password — unlike the admin delete flow (which only needs a click,
+    since an admin has already separately authenticated), this is a
+    self-service action reachable from an ordinary signed-in session, so a
+    left-open or borrowed browser shouldn't be able to nuke the account
+    with a single misclick."""
+    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    group = html.escape(user.group) if getattr(user, "group", "") else "—"
+    created = html.escape(user.created_at) if getattr(user, "created_at", "") else "—"
+    body = f"""
+    {error_html}
+    <table>
+      <tbody>
+        <tr><th>Email</th><td>{html.escape(user.email)}</td></tr>
+        <tr><th>Group</th><td>{group}</td></tr>
+        <tr><th>Member since</th><td>{created}</td></tr>
+      </tbody>
+    </table>
+    <div class="footer-link"><a href="/forgot-password">Change password</a> · <a href="/">Back to the dashboard</a></div>
+    <div class="notice" style="margin-top:20px;">
+      <strong>Delete my account</strong> — this removes your login, your
+      watchlists, and your saved Symbol list. This can't be undone.
+    </div>
+    <form method="post" action="/account/delete" style="margin-top:12px;">
+      <label>Confirm your password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="danger-btn" style="width:100%;padding:9px;font-size:14px;">Delete my account</button>
+    </form>
+    """
+    return _page("My account", body)
+
+
 # --- 403 for a logged-in-but-not-admin visitor to /admin/* ---
 def render_forbidden_page() -> str:
     body = """

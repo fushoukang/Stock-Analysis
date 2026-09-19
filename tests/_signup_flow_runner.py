@@ -26,6 +26,8 @@ def main() -> int:
 
     from fastapi.testclient import TestClient
     from data import users as user_store
+    from data import watchlists as watchlists_module
+    from alerts import kdj_monitor as kdj_monitor_module
     import web.app as app_module
 
     app_module.send_email_alert = lambda subject, body, to_address=None: (
@@ -319,6 +321,141 @@ def main() -> int:
     check(user_store.is_verified("unrelated@example.com"), "resetting the password should have verified the account")
     r = pw_client.post("/login", data={"email": "unrelated@example.com", "password": "another-new-pw-1"}, follow_redirects=False)
     check(r.status_code == 303, f"login after reset-verification: {r.status_code}")
+
+    # --- Per-user watchlists and per-user Focus Stock Analysis Symbol list ---
+    # `client` is still logged in as new.user@example.com (step 4's cookie,
+    # untouched since); `pw_client` is now logged in as unrelated@example.com
+    # (just switched at the login above) — two distinct real accounts, no
+    # extra signup needed.
+
+    # 30. Neither account has touched their watchlists yet, so both start
+    # from the same (here: empty) default template.
+    r = client.get("/api/watchlists")
+    check(r.status_code == 200 and r.json()["watchlists"] == [], f"new.user's initial watchlists: {r.text[:200]}")
+    r = pw_client.get("/api/watchlists")
+    check(r.status_code == 200 and r.json()["watchlists"] == [], f"unrelated's initial watchlists: {r.text[:200]}")
+
+    # 31. new.user creates a watchlist — it shows up for new.user only.
+    r = client.post("/api/watchlists", json={"name": "New User's List", "note": "", "symbols": ["aapl", "msft"]})
+    check(r.status_code == 200, f"create watchlist: {r.status_code} {r.text[:200]}")
+    created = r.json()["watchlist"]
+    check(created["symbols"] == ["AAPL", "MSFT"], f"created watchlist symbols: {created}")
+
+    r = client.get("/api/watchlists")
+    check([w["name"] for w in r.json()["watchlists"]] == ["New User's List"], "new.user should see their own watchlist")
+    r = pw_client.get("/api/watchlists")
+    check(r.json()["watchlists"] == [], "unrelated must NOT see new.user's watchlist")
+
+    # 32. unrelated creates their own, distinct watchlist — same id
+    # namespace, but scoped per account, so there's no collision and no
+    # cross-visibility either direction.
+    r = pw_client.post("/api/watchlists", json={"name": "Unrelated's List", "note": "", "symbols": ["spy"]})
+    check(r.status_code == 200, f"second account create watchlist: {r.status_code} {r.text[:200]}")
+    r = client.get("/api/watchlists")
+    check([w["name"] for w in r.json()["watchlists"]] == ["New User's List"], "new.user's list must be unaffected by unrelated's create")
+    r = pw_client.get("/api/watchlists")
+    check([w["name"] for w in r.json()["watchlists"]] == ["Unrelated's List"], "unrelated should see only their own watchlist")
+
+    # 33. unrelated can't update or delete new.user's watchlist by id —
+    # it simply doesn't exist in their own scope.
+    r = pw_client.put(f"/api/watchlists/{created['id']}", json={"name": "Hijacked", "note": "", "symbols": []})
+    check(r.status_code == 404, f"cross-account update should 404: {r.status_code}")
+    r = pw_client.delete(f"/api/watchlists/{created['id']}")
+    check(r.status_code == 404, f"cross-account delete should 404: {r.status_code}")
+    r = client.get("/api/watchlists")
+    check([w["name"] for w in r.json()["watchlists"]] == ["New User's List"], "new.user's watchlist should be untouched by unrelated's failed attempts")
+
+    # 34. new.user can update and delete their own watchlist normally.
+    r = client.put(f"/api/watchlists/{created['id']}", json={"name": "Renamed", "note": "n", "symbols": ["tqqq"]})
+    check(r.status_code == 200 and r.json()["watchlist"]["name"] == "Renamed", f"own update: {r.status_code} {r.text[:200]}")
+    r = client.delete(f"/api/watchlists/{created['id']}")
+    check(r.status_code == 200, f"own delete: {r.status_code}")
+    r = client.get("/api/watchlists")
+    check(r.json()["watchlists"] == [], "new.user's watchlist should be gone after their own delete")
+
+    # 35. Focus Stock Analysis Symbol list (monitor list) is likewise
+    # per-account — both start empty (no default template file here).
+    r = client.get("/api/symbols")
+    check(r.status_code == 200 and r.json()["symbols"] == [], f"new.user's initial symbols: {r.text[:200]}")
+    r = pw_client.get("/api/symbols")
+    check(r.status_code == 200 and r.json()["symbols"] == [], f"unrelated's initial symbols: {r.text[:200]}")
+
+    # 36. new.user saves their own Symbol list via the "Edit List" popup —
+    # it takes effect for new.user only, both on /api/symbols and the
+    # per-user field in /api/status.
+    r = client.post("/api/monitor-list", json={"symbols": ["aapl", "tsla", "aapl"]})
+    check(r.status_code == 200 and r.json()["symbols"] == ["AAPL", "TSLA"], f"save monitor list: {r.status_code} {r.text[:200]}")
+    r = client.get("/api/symbols")
+    check(r.json()["symbols"] == ["AAPL", "TSLA"], "new.user's symbol dropdown should reflect their own saved list")
+    r = client.get("/api/status")
+    check(r.json()["kdj_monitor_symbols"] == ["AAPL", "TSLA"], "new.user's /api/status should reflect their own saved list")
+
+    r = pw_client.get("/api/symbols")
+    check(r.json()["symbols"] == [], "unrelated's symbol dropdown must be unaffected by new.user's save")
+    r = pw_client.get("/api/status")
+    check(r.json()["kdj_monitor_symbols"] == [], "unrelated's /api/status must be unaffected by new.user's save")
+
+    # 37. /api/monitor-list requires authentication like everything else
+    # under this app (belt-and-suspenders check inside the endpoint itself).
+    r = unauth_client.post("/api/monitor-list", json={"symbols": ["aapl"]})
+    check(r.status_code == 401, f"unauthenticated monitor-list save should 401: {r.status_code}")
+
+    # 38. Deleting an account (admin-only) also removes that account's
+    # private watchlist/monitor-list files — no orphaned per-user data left
+    # behind. unrelated@example.com has both a watchlist and a saved Symbol
+    # list at this point (steps 32 and the analogous save below).
+    r = pw_client.post("/api/monitor-list", json={"symbols": ["spy"]})
+    check(r.status_code == 200, f"unrelated's monitor list save: {r.status_code} {r.text[:200]}")
+
+    wl_path = watchlists_module._user_path("unrelated@example.com")
+    ml_path = kdj_monitor_module.user_monitor_list_path("unrelated@example.com")
+    check(wl_path.exists(), "sanity check: unrelated's watchlist file should exist before deletion")
+    check(ml_path.exists(), "sanity check: unrelated's monitor list file should exist before deletion")
+
+    r = admin_client.post("/admin/users/delete", data={"email": "unrelated@example.com"}, follow_redirects=False)
+    check(r.status_code == 303, f"admin delete unrelated: {r.status_code}")
+    check(not wl_path.exists(), "unrelated's watchlist file should be gone after account deletion")
+    check(not ml_path.exists(), "unrelated's monitor list file should be gone after account deletion")
+
+    # --- Self-service account deletion (/account, /account/delete) ---
+    # `client` is still logged in as new.user@example.com (step 4's
+    # cookie) — its password is "new-password-1" by this point, not the
+    # original signup password, because step 28 above reset it via the
+    # same /reset-password flow tested there. It also has a saved Symbol
+    # list from step 36 whose per-user file should be cleaned up by a
+    # self-initiated delete exactly like an admin-initiated one (step 38
+    # above).
+
+    # 39. The account page shows the signed-in user's own email.
+    r = client.get("/account")
+    check(r.status_code == 200 and "new.user@example.com" in r.text, f"account page: {r.status_code}")
+
+    # 40. An unauthenticated visit to /account redirects to /login rather
+    # than showing the page or a bare 401 (same browser-nav treatment as "/").
+    r = unauth_client.get("/account", follow_redirects=False)
+    check(r.status_code == 303 and "/login" in r.headers.get("location", ""), f"unauthenticated /account visit: {r.status_code} -> {r.headers.get('location')}")
+
+    # 41. A wrong password on /account/delete is rejected, and the account
+    # is untouched.
+    r = client.post("/account/delete", data={"password": "totally-wrong"})
+    check(r.status_code == 401 and "incorrect password" in r.text.lower(), f"wrong password self-delete: {r.status_code} {r.text[:200]}")
+    check(user_store.user_exists("new.user@example.com"), "account should still exist after a wrong-password delete attempt")
+
+    new_user_ml_path = kdj_monitor_module.user_monitor_list_path("new.user@example.com")
+    check(new_user_ml_path.exists(), "sanity check: new.user's monitor list file should exist before self-delete")
+
+    # 42. The right password actually deletes the account, cleans up its
+    # own per-user data files, clears the session cookie, and redirects to
+    # /login with a confirmation message.
+    r = client.post("/account/delete", data={"password": "new-password-1"}, follow_redirects=False)
+    check(r.status_code == 303 and "/login" in r.headers.get("location", ""), f"self-delete: {r.status_code} -> {r.headers.get('location')}")
+    check(not user_store.user_exists("new.user@example.com"), "account should be gone after self-delete")
+    check(not new_user_ml_path.exists(), "new.user's monitor list file should be gone after self-delete")
+
+    # 43. The old session cookie no longer works, even on a request that
+    # still carries it — deleted immediately, not just once it expires.
+    r = client.get("/api/status")
+    check(r.status_code == 401, f"session should be invalid after self-delete: {r.status_code}")
 
     print("OK")
     return 0

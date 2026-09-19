@@ -647,3 +647,32 @@ def test_render_reset_password_success_page():
     html_out = auth.render_reset_password_success_page()
     assert "reset" in html_out.lower()
     assert 'href="/login"' in html_out
+
+
+# --- Self-service account page (render_account_page) ---
+
+def _fake_account(email="fenix@example.com", group="", created_at="2026-01-01T00:00:00+00:00"):
+    return SimpleNamespace(email=email, group=group, created_at=created_at)
+
+
+def test_render_account_page_shows_email_and_delete_form():
+    html_out = auth.render_account_page(_fake_account())
+    assert "fenix@example.com" in html_out
+    assert 'action="/account/delete"' in html_out
+    assert 'name="password"' in html_out
+    assert "Delete my account" in html_out
+
+
+def test_render_account_page_shows_group_when_set():
+    html_out = auth.render_account_page(_fake_account(group="FAMILY"))
+    assert "FAMILY" in html_out
+
+
+def test_render_account_page_shows_placeholder_when_no_group():
+    html_out = auth.render_account_page(_fake_account(group=""))
+    assert "—" in html_out
+
+
+def test_render_account_page_shows_error():
+    html_out = auth.render_account_page(_fake_account(), error="Incorrect password.")
+    assert "Incorrect password." in html_out
