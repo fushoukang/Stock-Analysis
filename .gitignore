@@ -24,6 +24,13 @@ data_store.db
 # User's personal Watchlists data (name/note/symbols) — runtime data, not source
 watchlists.json
 
+# Each account's own private Watchlists / Focus Stock Analysis Symbol list
+# (see data/user_watchlists/, alerts/kdj_monitor.py's user_monitor_list_path)
+# — runtime data, not source. watchlists.json/monitor_list.txt above are
+# just the shared default template new accounts get seeded from.
+data/user_watchlists/
+data/user_monitor_lists/
+
 # Web GUI login accounts (salted password hashes) — never commit this
 users.json
 

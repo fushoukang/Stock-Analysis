@@ -34,6 +34,8 @@ from typing import Awaitable, Callable
 import pandas as pd
 
 from config import settings, PROJECT_ROOT
+from data import users as user_store
+from data.user_paths import user_slug
 from data.store import BarStore
 from data.stream import RAW_TIMEFRAME
 from data.resample import resample_bars
@@ -92,6 +94,89 @@ def save_monitor_symbols(symbols: list[str], path: str | Path | None = None) -> 
     p = monitor_list_path(path)
     p.write_text("\n".join(cleaned) + ("\n" if cleaned else ""))
     return cleaned
+
+
+# --- Per-user monitor lists (Focus Stock Analysis page's Symbol list) ---
+# monitor_list.txt above stays in place unchanged as the *default template*
+# every new account's own list is seeded from the first time they touch it
+# (mirrors data/watchlists.py's per-user watchlists) — after that, each
+# account's list is independent, and also determines which symbols the
+# background KDJ monitor watches on that account's behalf and where it
+# emails a detected cross (see all_monitored_symbols/users_watching_symbol
+# and KDJMonitor.recipients_provider below).
+
+def user_monitor_list_path(email: str, path: str | Path | None = None) -> Path:
+    d = Path(path or settings.user_monitor_lists_dir)
+    if not d.is_absolute():
+        d = PROJECT_ROOT / d
+    return d / f"{user_slug(email)}.txt"
+
+
+def load_user_monitor_symbols(email: str) -> list[str]:
+    """The signed-in account's own Symbol list. If they haven't got a
+    private copy yet (never saved one via the "Edit List" popup), this
+    reads the shared default template directly — read-only, nothing is
+    written to disk yet — so a brand-new account sees the same starting
+    symbols as everyone else until they actually change something."""
+    p = user_monitor_list_path(email)
+    if not p.exists():
+        return load_monitor_symbols()
+    text = p.read_text()
+    symbols = [s.strip().upper() for s in text.replace(",", " ").split()]
+    return [s for s in symbols if s]
+
+
+def save_user_monitor_symbols(email: str, symbols: list[str]) -> list[str]:
+    """Write the signed-in account's own Symbol list, forking it off the
+    default template (if this is their first save) — used by the GUI's
+    "Edit List" popup (see web/app.py's /api/monitor-list POST endpoint)."""
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for s in symbols:
+        sym = s.strip().upper()
+        if sym and sym not in seen:
+            seen.add(sym)
+            cleaned.append(sym)
+    p = user_monitor_list_path(email)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(cleaned) + ("\n" if cleaned else ""))
+    return cleaned
+
+
+def delete_user_monitor_list_file(email: str) -> None:
+    """Removes an account's private Symbol list file entirely — called
+    when an admin deletes that account (see web/app.py's admin delete
+    route), so no orphaned per-user data is left behind."""
+    p = user_monitor_list_path(email)
+    if p.exists():
+        p.unlink()
+
+
+def all_monitored_symbols() -> list[str]:
+    """Union of every registered account's effective Symbol list (their own
+    saved list if they have one, else the shared default template) — this
+    is what the background KDJ monitor actually watches now that the Focus
+    Stock Analysis page's list is per-user. Re-read on every call, so it's
+    safe to pass directly as a KDJMonitor's symbols_provider (see
+    run_forever) and stay current as accounts edit their lists, with no
+    restart needed."""
+    symbols: set[str] = set()
+    for u in user_store.list_users():
+        symbols.update(load_user_monitor_symbols(u.email))
+    if not symbols:
+        # No accounts yet (or none with any symbols) — fall back to the
+        # template so the monitor still watches something sensible.
+        symbols.update(load_monitor_symbols())
+    return sorted(symbols)
+
+
+def users_watching_symbol(symbol: str) -> list[str]:
+    """Which registered accounts currently have `symbol` in their effective
+    Symbol list — used to route a detected KDJ cross's email to exactly the
+    account(s) actually watching that symbol, in place of the single fixed
+    ALERT_EMAIL_TO address. Pass as a KDJMonitor's recipients_provider."""
+    sym = symbol.strip().upper()
+    return [u.email for u in user_store.list_users() if sym in load_user_monitor_symbols(u.email)]
 
 
 def crypto_kdj_alert_state_path(path: str | Path | None = None) -> Path:
@@ -154,6 +239,7 @@ class KDJMonitor:
         on_alert: Callable[[dict], Awaitable[None]] | None = None,
         symbols_provider: Callable[[], list[str]] | None = None,
         email_alerts_enabled: Callable[[], bool] | None = None,
+        recipients_provider: Callable[[str], list[str]] | None = None,
         label: str = "",
     ):
         self.store = store
@@ -174,6 +260,14 @@ class KDJMonitor:
         self.email_alerts_enabled = email_alerts_enabled or (
             lambda: settings.kdj_email_alerts_enabled
         )
+        # Who to email when a cross is detected for a given symbol.
+        # Defaults to the single fixed ALERT_EMAIL_TO address (the original
+        # behavior, still used by the crypto monitor) — pass a different
+        # callable to route each alert to whichever account(s) actually
+        # have that symbol on their own Symbol list, e.g.
+        # alerts.kdj_monitor.users_watching_symbol for the per-user stock
+        # monitor (see web/app.py's startup).
+        self.recipients_provider = recipients_provider or (lambda symbol: [settings.alert_email_to])
         # Purely cosmetic — included in log lines so multiple concurrent
         # monitor instances (e.g. "stock" and "crypto") are distinguishable.
         self.label = label
@@ -236,12 +330,21 @@ class KDJMonitor:
         )
         logger.info("KDJ cross detected: %s", subject)
 
+        prefix = f"[{self.label}] " if self.label else ""
         if self.email_alerts_enabled():
-            await asyncio.to_thread(send_email_alert, subject, body)
+            recipients = [addr for addr in self.recipients_provider(symbol) if addr]
+            if recipients:
+                for to_address in recipients:
+                    await asyncio.to_thread(send_email_alert, subject, body, to_address)
+            else:
+                logger.info(
+                    "%sNo one is currently watching %s — skipping email (on-screen alert still fires)",
+                    prefix, symbol,
+                )
         else:
             logger.info(
                 "%semail alerts are off — skipping email for %s (on-screen alert still fires)",
-                f"[{self.label}] " if self.label else "",
+                prefix,
                 symbol,
             )
 

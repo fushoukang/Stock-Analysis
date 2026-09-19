@@ -203,15 +203,6 @@ indicators.
      email" button. `VERIFICATION_TOKEN_MAX_AGE_HOURS` (default 24)
      controls how long that link stays valid.
 
-     **Different codes for different groups:** instead of (or alongside)
-     the single `REGISTRATION_CODE`, set any number of
-     `REGISTRATION_CODE_<GROUP>` vars in `.env` — e.g.
-     `REGISTRATION_CODE_FAMILY=...` and `REGISTRATION_CODE_FRIENDS=...`.
-     Whoever signs up with a given code gets tagged with that group
-     (upper-cased) purely as a label for your own bookkeeping — everyone
-     ends up with identical access to the app either way. See who signed
-     up under which group with `python manage_users.py list`.
-
      **Public guest signup:** the `GUEST` group is treated specially —
      set `REGISTRATION_CODE_GUEST=0000` (or any value) and the `/signup`
      page shows it directly to visitors ("Enter 0000 as the registration
@@ -231,14 +222,6 @@ indicators.
    reset link also verifies the account, same as clicking a signup
    verification link, since it proves the same thing (control of the
    mailbox).
-
-   Until at least one account exists (or signup is turned on), the app
-   stays locked — there's no unauthenticated fallback. Also set
-   `SESSION_SECRET_KEY` (a fresh one is generated in your `.env` for you
-   already — see `web/auth.py`) so logins and any pending verification
-   links survive a restart instead of resetting each time;
-   `SESSION_MAX_AGE_HOURS` (default 168 = 7 days) controls how long a
-   login lasts before signing in again.
 
    **Managing accounts from the browser:** set `ADMIN_EMAILS` (comma-
    separated) in `.env` to let those specific account(s) reach
@@ -338,39 +321,3 @@ data/user_monitor_lists/ each account's own private Symbol list (gitignored)
 pip install -r requirements.txt
 pytest
 ```
-
-Covers the pure-logic modules: indicator math (`indicators/`), the
-composite signal's per-rule correctness and fault-isolation guarantee
-(`indicators/signals.py` — one indicator's exception must never wipe out
-signals already computed for the others), KDJ cross detection and
-monitor-list read/write, the halts screener's direction logic, watchlists
-CRUD round-trips, the rule-based market holiday calendar, `BarStore`
-(bar upsert/prune, KDJ alert record/backfill), and the crypto
-display-name/Binance-link helpers plus the chart title's quote_url override.
-Doesn't cover the FastAPI endpoints themselves end-to-end or the frontend
-JS — those are verified manually (`TestClient` + `node --check` during
-development) rather than as part of this pytest suite.
-
-## Notes / next steps
-
-- The live stream persists raw 1-minute bars (Alpaca's native streaming
-  aggregation). Larger intervals (5Min/1Hour/1Day) are currently served via
-  historical REST calls rather than resampled locally — resampling the
-  stored 1Min bars would let those update live too.
-- No authentication/authorization on the web GUI — it's meant for local use.
-  Add auth before exposing it beyond localhost.
-- IEX (free) data feed is the default; switch `ALPACA_DATA_FEED=sip` in
-  `.env` if you have a SIP subscription for full-market data.
-- The crypto KDJ monitor's watch list (`CRYPTO_KDJ_MONITOR_SYMBOLS`) is a
-  plain comma-separated `.env` value, unlike the stock monitor's editable
-  `monitor_list.txt` (which also has an "Edit List" popup in the GUI). A
-  natural follow-up would be a `crypto_monitor_list.txt` file plus an
-  equivalent GUI editor, for parity with the stock side.
-- The market data window (`MARKET_DATA_START_ET`/`MARKET_DATA_END_ET`) now
-  also checks a rule-based NYSE/Nasdaq holiday calendar (`market_holidays.py`
-  — New Year's, MLK Day, Presidents Day, Good Friday, Memorial Day,
-  Juneteenth, Independence Day, Labor Day, Thanksgiving, Christmas, with the
-  standard weekend-observed shift), so the app makes zero Alpaca calls on
-  market holidays, not just weekends. It doesn't model early-close
-  half-days (e.g. the day after Thanksgiving) — those are still treated as
-  a normal full trading day.

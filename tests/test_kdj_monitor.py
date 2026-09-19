@@ -11,14 +11,25 @@ import pandas as pd
 import pytest
 
 from config import settings
+from data.users import User
+import alerts.kdj_monitor as kdj_module
 from alerts.kdj_monitor import (
     KDJMonitor,
+    all_monitored_symbols,
+    delete_user_monitor_list_file,
     detect_cross,
     load_monitor_symbols,
+    load_user_monitor_symbols,
     save_monitor_symbols,
+    save_user_monitor_symbols,
+    users_watching_symbol,
     load_crypto_kdj_email_alerts_enabled,
     save_crypto_kdj_email_alerts_enabled,
 )
+
+
+def _user(email: str) -> User:
+    return User(email=email, salt_hex="", hash_hex="")
 
 
 class _EmptyStore:
@@ -165,3 +176,192 @@ def test_load_crypto_kdj_email_alerts_enabled_falls_back_on_corrupt_file(tmp_pat
     p = tmp_path / "state.json"
     p.write_text("{not valid json")
     assert load_crypto_kdj_email_alerts_enabled(p) == settings.crypto_kdj_email_alerts_enabled
+
+
+# --- Per-user monitor lists (Focus Stock Analysis page's Symbol list) ---
+
+ALICE = "alice@example.com"
+BOB = "bob@example.com"
+
+
+@pytest.fixture(autouse=True)
+def _redirect_user_monitor_list_path(tmp_path, monkeypatch):
+    d = tmp_path / "user_monitor_lists"
+
+    def _fake_path(email, path=None):
+        return d / f"{email.replace('@', '_at_')}.txt"
+
+    monkeypatch.setattr(kdj_module, "user_monitor_list_path", _fake_path)
+    yield d
+
+
+def test_load_user_monitor_symbols_falls_back_to_default_template(tmp_path, monkeypatch):
+    default = tmp_path / "monitor_list.txt"
+    monkeypatch.setattr(kdj_module, "monitor_list_path", lambda path=None: default)
+    save_monitor_symbols(["SPY", "QQQ"], default)
+
+    assert load_user_monitor_symbols(ALICE) == ["SPY", "QQQ"]
+    # Reading never persists anything for the user — no per-user file yet.
+    assert not kdj_module.user_monitor_list_path(ALICE).exists()
+
+
+def test_save_user_monitor_symbols_forks_independently_of_default_and_other_users(tmp_path, monkeypatch):
+    default = tmp_path / "monitor_list.txt"
+    monkeypatch.setattr(kdj_module, "monitor_list_path", lambda path=None: default)
+    save_monitor_symbols(["SPY"], default)
+
+    save_user_monitor_symbols(ALICE, ["aapl", "msft", "aapl"])
+    assert load_user_monitor_symbols(ALICE) == ["AAPL", "MSFT"]  # uppercased + deduped
+    # Bob never saved his own list, so he still just sees the template.
+    assert load_user_monitor_symbols(BOB) == ["SPY"]
+    # The template itself is untouched by Alice's save.
+    assert load_monitor_symbols(default) == ["SPY"]
+
+
+def test_delete_user_monitor_list_file_resets_to_default_template(tmp_path, monkeypatch):
+    default = tmp_path / "monitor_list.txt"
+    monkeypatch.setattr(kdj_module, "monitor_list_path", lambda path=None: default)
+    save_monitor_symbols(["SPY"], default)
+    save_user_monitor_symbols(ALICE, ["TQQQ"])
+    assert load_user_monitor_symbols(ALICE) == ["TQQQ"]
+
+    delete_user_monitor_list_file(ALICE)
+    assert load_user_monitor_symbols(ALICE) == ["SPY"]
+
+
+def test_delete_user_monitor_list_file_missing_file_is_a_noop():
+    delete_user_monitor_list_file(ALICE)  # never created — should not raise
+
+
+def test_all_monitored_symbols_unions_every_registered_users_effective_list(tmp_path, monkeypatch):
+    default = tmp_path / "monitor_list.txt"
+    monkeypatch.setattr(kdj_module, "monitor_list_path", lambda path=None: default)
+    save_monitor_symbols(["SPY"], default)
+    save_user_monitor_symbols(ALICE, ["AAPL"])
+    # Bob never customized his — his effective list is still the template (SPY).
+
+    monkeypatch.setattr(kdj_module.user_store, "list_users", lambda: [_user(ALICE), _user(BOB)])
+    assert all_monitored_symbols() == ["AAPL", "SPY"]
+
+
+def test_all_monitored_symbols_falls_back_to_default_when_no_users_registered(tmp_path, monkeypatch):
+    default = tmp_path / "monitor_list.txt"
+    monkeypatch.setattr(kdj_module, "monitor_list_path", lambda path=None: default)
+    save_monitor_symbols(["SPY"], default)
+
+    monkeypatch.setattr(kdj_module.user_store, "list_users", lambda: [])
+    assert all_monitored_symbols() == ["SPY"]
+
+
+def test_users_watching_symbol_returns_only_matching_accounts(tmp_path, monkeypatch):
+    default = tmp_path / "monitor_list.txt"
+    monkeypatch.setattr(kdj_module, "monitor_list_path", lambda path=None: default)
+    save_monitor_symbols(["SPY"], default)
+    save_user_monitor_symbols(ALICE, ["AAPL"])
+    # Bob's effective list is the template (SPY) — he's watching SPY, not AAPL.
+
+    monkeypatch.setattr(kdj_module.user_store, "list_users", lambda: [_user(ALICE), _user(BOB)])
+    assert users_watching_symbol("AAPL") == [ALICE]
+    assert users_watching_symbol("SPY") == [BOB]
+    assert users_watching_symbol("tsla") == []  # nobody watching, and lowercase input still matches
+
+
+# --- KDJMonitor's recipients_provider (per-symbol email routing) ---
+
+def test_kdj_monitor_defaults_recipients_provider_to_fixed_alert_email():
+    mon = KDJMonitor(_EmptyStore())
+    assert mon.recipients_provider("AAPL") == [settings.alert_email_to]
+
+
+def test_kdj_monitor_honors_injected_recipients_provider():
+    mon = KDJMonitor(_EmptyStore(), recipients_provider=lambda symbol: [f"{symbol}@watchers.example"])
+    assert mon.recipients_provider("AAPL") == ["AAPL@watchers.example"]
+
+
+class _RawStore:
+    """Minimal store double returning a fixed raw-bars DataFrame regardless
+    of symbol — used together with monkeypatched resample_bars/kdj (below)
+    to drive _check_symbol through a controlled, deterministic cross
+    without needing real OHLC data or KDJ math."""
+
+    def __init__(self, df):
+        self._df = df
+
+    def get_bars(self, *args, **kwargs):
+        return self._df
+
+
+def _kdj_df_at(start: str, k_values: list[float], d_values: list[float]) -> pd.DataFrame:
+    idx = pd.date_range(start, periods=len(k_values), freq="15min", tz="UTC")
+    return pd.DataFrame({"k": k_values, "d": d_values, "j": [0.0] * len(k_values)}, index=idx)
+
+
+def test_check_symbol_emails_every_recipient_on_a_detected_cross(monkeypatch):
+    """End-to-end (within _check_symbol) regression guard for the new
+    per-recipient email fan-out: the first check only seeds a baseline (no
+    email — see module docstring), the second sees a real K/D cross and
+    must email every address recipients_provider(symbol) returns, one
+    send_email_alert call each."""
+    raw_idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=3, freq="1min")
+    raw_df = pd.DataFrame({"c": [1.0, 1.0, 1.0]}, index=raw_idx)
+    resampled_stub = pd.DataFrame({"c": [1.0] * 25})  # length >= MIN_BARS_FOR_SIGNAL
+
+    baseline_kdj = _kdj_df_at("2026-01-01", [20, 20], [20, 20])  # no transition — just the seed
+    crossed_kdj = _kdj_df_at("2026-01-02", [15, 25], [20, 20])   # prev k<d, curr k>d -> "up"
+    kdj_returns = [baseline_kdj, crossed_kdj]
+
+    monkeypatch.setattr(kdj_module, "resample_bars", lambda df, tf: resampled_stub)
+    monkeypatch.setattr(kdj_module, "kdj", lambda df: kdj_returns.pop(0))
+
+    sent: list[str | None] = []
+    monkeypatch.setattr(
+        kdj_module,
+        "send_email_alert",
+        lambda subject, body, to_address=None: sent.append(to_address) or True,
+    )
+
+    mon = KDJMonitor(
+        _RawStore(raw_df),
+        email_alerts_enabled=lambda: True,
+        recipients_provider=lambda symbol: [ALICE, BOB],
+    )
+
+    asyncio.run(mon._check_symbol("AAPL"))  # baseline — no email yet
+    assert sent == []
+
+    asyncio.run(mon._check_symbol("AAPL"))  # real cross now
+    assert sent == [ALICE, BOB]
+
+
+def test_check_symbol_skips_email_when_nobody_is_watching(monkeypatch):
+    """If recipients_provider comes back empty (shouldn't normally happen
+    for the real union-based provider, but is possible with a custom one),
+    _check_symbol must not blow up and must simply send no email."""
+    raw_idx = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=3, freq="1min")
+    raw_df = pd.DataFrame({"c": [1.0, 1.0, 1.0]}, index=raw_idx)
+    resampled_stub = pd.DataFrame({"c": [1.0] * 25})
+
+    baseline_kdj = _kdj_df_at("2026-01-01", [20, 20], [20, 20])
+    crossed_kdj = _kdj_df_at("2026-01-02", [15, 25], [20, 20])
+    kdj_returns = [baseline_kdj, crossed_kdj]
+
+    monkeypatch.setattr(kdj_module, "resample_bars", lambda df, tf: resampled_stub)
+    monkeypatch.setattr(kdj_module, "kdj", lambda df: kdj_returns.pop(0))
+
+    sent: list[str | None] = []
+    monkeypatch.setattr(
+        kdj_module,
+        "send_email_alert",
+        lambda subject, body, to_address=None: sent.append(to_address) or True,
+    )
+
+    mon = KDJMonitor(
+        _RawStore(raw_df),
+        email_alerts_enabled=lambda: True,
+        recipients_provider=lambda symbol: [],
+    )
+
+    asyncio.run(mon._check_symbol("AAPL"))
+    asyncio.run(mon._check_symbol("AAPL"))
+    assert sent == []
+
